@@ -1,17 +1,10 @@
-import React, { useState, useCallback } from "react";
-import {
-  View,
-  StyleSheet,
-  TouchableOpacity,
-  Alert,
-  ScrollView,
-} from "react-native";
+import React, { useCallback } from "react";
+import { View, StyleSheet, TouchableOpacity } from "react-native";
 import { ThemedText } from "./ThemedText";
 import { ThemedView } from "./ThemedView";
 import { Ionicons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
-import { Image } from "expo-image";
 import { useThemeColor } from "@/hooks/useThemeColor";
 
 interface UploadedFile {
@@ -28,6 +21,8 @@ interface FileUploadComponentProps {
   maxFiles?: number;
   acceptedTypes?: string[];
   disabled?: boolean;
+  onMaxFilesWarning?: (message: string) => void;
+  currentFileCount?: number;
 }
 
 export const FileUploadComponent: React.FC<FileUploadComponentProps> = ({
@@ -35,25 +30,17 @@ export const FileUploadComponent: React.FC<FileUploadComponentProps> = ({
   maxFiles = 5,
   acceptedTypes = ["image/*", "application/pdf", "text/plain"],
   disabled = false,
+  onMaxFilesWarning,
+  currentFileCount = 0,
 }) => {
-  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-
   // Theme colors
   const backgroundColor = useThemeColor({}, "background");
   const textColor = useThemeColor({}, "text");
   const tintColor = useThemeColor({}, "tint");
   const placeholderColor = useThemeColor({}, "icon");
 
-  const updateFiles = useCallback(
-    (newFiles: UploadedFile[]) => {
-      setUploadedFiles(newFiles);
-      onFilesChange(newFiles);
-    },
-    [onFilesChange],
-  );
-
   const handleDocumentPick = useCallback(async () => {
-    if (disabled || uploadedFiles.length >= maxFiles) return;
+    if (disabled) return;
 
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -72,25 +59,45 @@ export const FileUploadComponent: React.FC<FileUploadComponentProps> = ({
           mimeType: asset.mimeType,
         }));
 
-        const filteredFiles = newFiles.slice(
-          0,
-          maxFiles - uploadedFiles.length,
-        );
-        updateFiles([...uploadedFiles, ...filteredFiles]);
+        const availableSlots = maxFiles - currentFileCount;
+        const filteredFiles = newFiles.slice(0, availableSlots);
+
+        if (filteredFiles.length > 0) {
+          onFilesChange(filteredFiles);
+
+          // Show warning if some files were not added due to limit
+          if (newFiles.length > filteredFiles.length && onMaxFilesWarning) {
+            onMaxFilesWarning(
+              `Only ${filteredFiles.length} of ${newFiles.length} files were added. Maximum ${maxFiles} files allowed.`,
+            );
+          }
+        }
       }
-    } catch (error) {
-      Alert.alert("Error", "Failed to pick document. Please try again.");
+    } catch (err) {
+      if (onMaxFilesWarning) {
+        onMaxFilesWarning("Failed to pick document. Please try again.");
+      }
+      console.error("Document picking error:", err);
     }
-  }, [uploadedFiles, maxFiles, acceptedTypes, disabled, updateFiles]);
+  }, [
+    currentFileCount,
+    maxFiles,
+    acceptedTypes,
+    disabled,
+    onFilesChange,
+    onMaxFilesWarning,
+  ]);
 
   const handleImagePick = useCallback(async () => {
-    if (disabled || uploadedFiles.length >= maxFiles) return;
+    if (disabled) return;
 
     try {
       const { status } =
         await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Permission denied", "Camera roll permission is required!");
+        if (onMaxFilesWarning) {
+          onMaxFilesWarning("Camera roll permission is required!");
+        }
         return;
       }
 
@@ -111,24 +118,42 @@ export const FileUploadComponent: React.FC<FileUploadComponentProps> = ({
           mimeType: asset.type || "image/jpeg",
         }));
 
-        const filteredFiles = newFiles.slice(
-          0,
-          maxFiles - uploadedFiles.length,
-        );
-        updateFiles([...uploadedFiles, ...filteredFiles]);
+        const availableSlots = maxFiles - currentFileCount;
+        const filteredFiles = newFiles.slice(0, availableSlots);
+
+        if (filteredFiles.length > 0) {
+          onFilesChange(filteredFiles);
+
+          // Show warning if some files were not added due to limit
+          if (newFiles.length > filteredFiles.length && onMaxFilesWarning) {
+            onMaxFilesWarning(
+              `Only ${filteredFiles.length} of ${newFiles.length} files were added. Maximum ${maxFiles} files allowed.`,
+            );
+          }
+        }
       }
-    } catch (error) {
-      Alert.alert("Error", "Failed to pick image. Please try again.");
+    } catch (err) {
+      if (onMaxFilesWarning) {
+        onMaxFilesWarning("Failed to pick image. Please try again.");
+      }
+      console.error("Image picking error:", err);
     }
-  }, [uploadedFiles, maxFiles, disabled, updateFiles]);
+  }, [currentFileCount, maxFiles, disabled, onFilesChange, onMaxFilesWarning]);
 
   const handleCameraPick = useCallback(async () => {
-    if (disabled || uploadedFiles.length >= maxFiles) return;
+    if (disabled) return;
+
+    // Don't allow camera if already at max files
+    if (currentFileCount >= maxFiles) {
+      return;
+    }
 
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Permission denied", "Camera permission is required!");
+        if (onMaxFilesWarning) {
+          onMaxFilesWarning("Camera permission is required!");
+        }
         return;
       }
 
@@ -149,190 +174,86 @@ export const FileUploadComponent: React.FC<FileUploadComponentProps> = ({
           mimeType: asset.type || "image/jpeg",
         };
 
-        updateFiles([...uploadedFiles, newFile]);
+        onFilesChange([newFile]);
       }
-    } catch (error) {
-      Alert.alert("Error", "Failed to take photo. Please try again.");
+    } catch (err) {
+      if (onMaxFilesWarning) {
+        onMaxFilesWarning("Failed to take photo. Please try again.");
+      }
+      console.error("Camera error:", err);
     }
-  }, [uploadedFiles, maxFiles, disabled, updateFiles]);
+  }, [currentFileCount, maxFiles, disabled, onFilesChange, onMaxFilesWarning]);
 
-  const handleRemoveFile = useCallback(
-    (fileId: string) => {
-      const newFiles = uploadedFiles.filter((file) => file.id !== fileId);
-      updateFiles(newFiles);
-    },
-    [uploadedFiles, updateFiles],
-  );
-
-  const formatFileSize = (bytes: number): string => {
-    if (bytes === 0) return "0 Bytes";
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-  };
-
-  const getFileIcon = (type: string): keyof typeof Ionicons.glyphMap => {
-    if (type.startsWith("image/")) return "image";
-    if (type.includes("pdf")) return "document";
-    if (type.includes("text")) return "document-text";
-    return "document";
-  };
-
-  const isMaxFilesReached = uploadedFiles.length >= maxFiles;
+  const isMaxFilesReached = currentFileCount >= maxFiles;
 
   return (
-    <ThemedView style={styles.container}>
-      {/* Upload Options */}
-      <View style={styles.optionsContainer}>
-        <TouchableOpacity
-          style={[
-            styles.optionButton,
-            {
-              backgroundColor: backgroundColor,
-              borderColor: placeholderColor,
-              opacity: disabled || isMaxFilesReached ? 0.5 : 1,
-            },
-          ]}
-          onPress={handleCameraPick}
-          disabled={disabled || isMaxFilesReached}
-        >
-          <Ionicons name="camera" size={20} color={tintColor} />
-          <ThemedText style={[styles.optionTitle, { color: textColor }]}>
-            Camera
-          </ThemedText>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[
-            styles.optionButton,
-            {
-              backgroundColor: backgroundColor,
-              borderColor: placeholderColor,
-              opacity: disabled || isMaxFilesReached ? 0.5 : 1,
-            },
-          ]}
-          onPress={handleImagePick}
-          disabled={disabled || isMaxFilesReached}
-        >
-          <Ionicons name="images" size={20} color={tintColor} />
-          <ThemedText style={[styles.optionTitle, { color: textColor }]}>
-            Photos
-          </ThemedText>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[
-            styles.optionButton,
-            {
-              backgroundColor: backgroundColor,
-              borderColor: placeholderColor,
-              opacity: disabled || isMaxFilesReached ? 0.5 : 1,
-            },
-          ]}
-          onPress={handleDocumentPick}
-          disabled={disabled || isMaxFilesReached}
-        >
-          <Ionicons name="document" size={20} color={tintColor} />
-          <ThemedText style={[styles.optionTitle, { color: textColor }]}>
-            Files
-          </ThemedText>
-        </TouchableOpacity>
-      </View>
-
-      {/* File List */}
-      {uploadedFiles.length > 0 && (
-        <>
-          <View style={styles.filesHeader}>
-            <ThemedText style={[styles.filesTitle, { color: textColor }]}>
-              Uploaded Files ({uploadedFiles.length}/{maxFiles})
-            </ThemedText>
-          </View>
-
-          <ScrollView
-            style={styles.filesList}
-            showsVerticalScrollIndicator={false}
+    <>
+      <ThemedView style={styles.container}>
+        {/* Upload Options - Always at bottom of container */}
+        <View style={styles.optionsContainer}>
+          <TouchableOpacity
+            style={[
+              styles.optionButton,
+              {
+                backgroundColor: backgroundColor,
+                borderColor: placeholderColor,
+                opacity: disabled || isMaxFilesReached ? 0.5 : 1,
+              },
+            ]}
+            onPress={handleCameraPick}
+            disabled={disabled || isMaxFilesReached}
           >
-            {uploadedFiles.map((file) => (
-              <View
-                key={file.id}
-                style={[
-                  styles.fileItem,
-                  {
-                    backgroundColor: backgroundColor,
-                    borderColor: `${placeholderColor}30`,
-                  },
-                ]}
-              >
-                <View style={styles.fileContent}>
-                  {file.type.startsWith("image/") ? (
-                    <Image
-                      source={{ uri: file.uri }}
-                      style={styles.filePreview}
-                      contentFit="cover"
-                    />
-                  ) : (
-                    <View
-                      style={[
-                        styles.fileIconContainer,
-                        { backgroundColor: `${tintColor}15` },
-                      ]}
-                    >
-                      <Ionicons
-                        name={getFileIcon(file.type)}
-                        size={20}
-                        color={tintColor}
-                      />
-                    </View>
-                  )}
+            <Ionicons name="camera" size={20} color={tintColor} />
+            <ThemedText style={[styles.optionTitle, { color: textColor }]}>
+              Camera
+            </ThemedText>
+          </TouchableOpacity>
 
-                  <View style={styles.fileInfo}>
-                    <ThemedText
-                      style={[styles.fileName, { color: textColor }]}
-                      numberOfLines={1}
-                    >
-                      {file.name}
-                    </ThemedText>
-                    <ThemedText
-                      style={[styles.fileSize, { color: placeholderColor }]}
-                    >
-                      {formatFileSize(file.size)}
-                    </ThemedText>
-                  </View>
-                </View>
+          <TouchableOpacity
+            style={[
+              styles.optionButton,
+              {
+                backgroundColor: backgroundColor,
+                borderColor: placeholderColor,
+                opacity: disabled || isMaxFilesReached ? 0.5 : 1,
+              },
+            ]}
+            onPress={handleImagePick}
+            disabled={disabled || isMaxFilesReached}
+          >
+            <Ionicons name="images" size={20} color={tintColor} />
+            <ThemedText style={[styles.optionTitle, { color: textColor }]}>
+              Photos
+            </ThemedText>
+          </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={styles.removeButton}
-                  onPress={() => handleRemoveFile(file.id)}
-                >
-                  <Ionicons
-                    name="close-circle"
-                    size={20}
-                    color={placeholderColor}
-                  />
-                </TouchableOpacity>
-              </View>
-            ))}
-          </ScrollView>
-        </>
-      )}
-
-      {/* Max Files Warning */}
-      {isMaxFilesReached && (
-        <View style={styles.warningContainer}>
-          <Ionicons name="warning" size={16} color={placeholderColor} />
-          <ThemedText style={[styles.warningText, { color: placeholderColor }]}>
-            Maximum {maxFiles} files reached. Remove some to add more.
-          </ThemedText>
+          <TouchableOpacity
+            style={[
+              styles.optionButton,
+              {
+                backgroundColor: backgroundColor,
+                borderColor: placeholderColor,
+                opacity: disabled || isMaxFilesReached ? 0.5 : 1,
+              },
+            ]}
+            onPress={handleDocumentPick}
+            disabled={disabled || isMaxFilesReached}
+          >
+            <Ionicons name="document" size={20} color={tintColor} />
+            <ThemedText style={[styles.optionTitle, { color: textColor }]}>
+              Files
+            </ThemedText>
+          </TouchableOpacity>
         </View>
-      )}
-    </ThemedView>
+      </ThemedView>
+    </>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     padding: 20,
+    justifyContent: "flex-end",
   },
   optionsContainer: {
     flexDirection: "row",
@@ -351,71 +272,6 @@ const styles = StyleSheet.create({
   optionTitle: {
     fontSize: 12,
     fontWeight: "500",
-    textAlign: "center",
-  },
-  filesHeader: {
-    marginTop: 20,
-    marginBottom: 12,
-  },
-  filesTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  filesList: {
-    maxHeight: 200,
-  },
-  fileItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    marginBottom: 8,
-  },
-  fileContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-  },
-  filePreview: {
-    width: 40,
-    height: 40,
-    borderRadius: 6,
-    marginRight: 12,
-  },
-  fileIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 6,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  fileInfo: {
-    flex: 1,
-  },
-  fileName: {
-    fontSize: 14,
-    fontWeight: "500",
-    marginBottom: 2,
-  },
-  fileSize: {
-    fontSize: 12,
-  },
-  removeButton: {
-    padding: 4,
-  },
-  warningContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 16,
-    padding: 12,
-    gap: 6,
-  },
-  warningText: {
-    fontSize: 12,
     textAlign: "center",
   },
 });

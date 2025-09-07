@@ -7,7 +7,6 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
@@ -28,6 +27,7 @@ import {
   isNotebookSaved as checkNotebookSaved,
 } from "@/utils/storage";
 import LottieView from "lottie-react-native";
+import { useThemedAlert } from "@/hooks/useThemedAlert";
 
 const Create = () => {
   const [inputText, setInputText] = useState("");
@@ -39,6 +39,9 @@ const Create = () => {
   const [generationStep, setGenerationStep] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isNotebookSaved, setIsNotebookSaved] = useState(false);
+
+  // Themed alert hook
+  const { alert, error, AlertComponent } = useThemedAlert();
 
   // Theme colors using hooks
   const backgroundColor = useThemeColor({}, "background");
@@ -54,16 +57,17 @@ const Create = () => {
 
   const toggleUploadOptions = () => {
     setShowUploadOptions(!showUploadOptions);
+    // Increased height to accommodate file previews and upload buttons
     uploadOptionsHeight.value = withTiming(showUploadOptions ? 0 : 120);
   };
 
-  const handleFilesChange = (files: any[]) => {
-    setUploadedFiles(files);
+  const handleFilesChange = (newFiles: any[]) => {
+    setUploadedFiles((prevFiles) => [...prevFiles, ...newFiles]);
   };
 
   const handleAdvancedGeneration = async () => {
     if (!inputText.trim() && uploadedFiles.length === 0) {
-      Alert.alert(
+      error(
         "Input Required",
         "Please enter a prompt or upload files to generate notes.",
       );
@@ -90,7 +94,7 @@ const Create = () => {
       setUploadedFiles([]);
       setShowUploadOptions(false);
 
-      Alert.alert(
+      alert(
         "Success!",
         `Generated "${notebook.title}" with ${notebook.totalImages} images and ${notebook.wordCount} words.`,
       );
@@ -124,7 +128,7 @@ const Create = () => {
         }
       }
 
-      Alert.alert("Generation Failed", errorMessage, [
+      alert("Generation Failed", errorMessage, [
         { text: "OK", style: "default" },
         {
           text: "Retry",
@@ -153,27 +157,27 @@ const Create = () => {
       const success = await saveNotebook(generatedNotebook);
       if (success) {
         setIsNotebookSaved(true);
-        Alert.alert(
+        alert(
           "Success!",
           "Notebook saved successfully. You can view it in the Home tab.",
           [{ text: "OK" }],
         );
       } else {
-        Alert.alert("Error", "Failed to save notebook. Please try again.");
+        error("Error", "Failed to save notebook. Please try again.");
       }
-    } catch (error) {
-      console.error("Save error:", error);
+    } catch (err) {
+      console.error("Save error:", err);
 
       const errorMessage =
-        error instanceof Error
-          ? error.message
+        err instanceof Error
+          ? err.message
           : "Failed to save notebook. Please try again.";
 
       if (
         errorMessage.includes("Storage full") ||
         errorMessage.includes("storage is full")
       ) {
-        Alert.alert("Storage Optimized", errorMessage, [
+        alert("Storage Optimized", errorMessage, [
           { text: "OK", style: "default" },
           {
             text: "Try Again",
@@ -182,7 +186,7 @@ const Create = () => {
           {
             text: "View Saved Notes",
             onPress: () => {
-              Alert.alert(
+              alert(
                 "Manage Storage",
                 "Go to Home tab to view and delete old notes to free up more space.",
                 [{ text: "OK" }],
@@ -191,7 +195,7 @@ const Create = () => {
           },
         ]);
       } else {
-        Alert.alert("Error", errorMessage);
+        error("Error", errorMessage);
       }
     } finally {
       setIsSaving(false);
@@ -387,124 +391,229 @@ const Create = () => {
             <Ionicons name="add" size={28} color={backgroundColor} />
           </TouchableOpacity>
         </View>
+
+        {/* Themed Alert Component */}
+        <AlertComponent />
       </ThemedView>
     );
   }
 
   // Show input form
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
-    >
-      <ThemedView style={styles.container}>
-        {/* Main Content Area */}
-        <View style={styles.contentArea}>
-          <ThemedText style={styles.subtitle}>
-            Upload files or enter a prompt to generate AI-powered notes with
-            images and comprehensive content
-          </ThemedText>
-        </View>
-
-        {/* File Upload Section */}
-        <Animated.View
-          style={[
-            styles.uploadOptionsContainer,
-            uploadOptionsAnimatedStyle,
-            { backgroundColor: backgroundColor },
-          ]}
-        >
-          <FileUploadComponent
-            onFilesChange={handleFilesChange}
-            maxFiles={5}
-            acceptedTypes={["image/*", "application/pdf", "text/plain"]}
-            disabled={isGenerating}
-          />
-        </Animated.View>
-
-        {/* Input Area */}
-        <View style={styles.inputContainer}>
-          <View style={styles.inputRow}>
-            {/* File Upload Toggle Button */}
-            <TouchableOpacity
-              style={[
-                styles.attachButton,
-                {
-                  backgroundColor: showUploadOptions
-                    ? placeholderColor
-                    : tintColor,
-                },
-              ]}
-              onPress={toggleUploadOptions}
-              disabled={isGenerating}
-            >
-              <Ionicons
-                name={showUploadOptions ? "close" : "attach"}
-                size={24}
-                color={backgroundColor}
-              />
-            </TouchableOpacity>
-
-            {/* Text Input */}
-            <TextInput
-              value={inputText}
-              onChangeText={setInputText}
-              placeholderTextColor={placeholderColor}
-              placeholder="Enter your prompt here..."
-              multiline
-              style={[
-                styles.textInput,
-                {
-                  color: textColor,
-                  backgroundColor: backgroundColor,
-                  borderColor: placeholderColor,
-                },
-              ]}
-              editable={!isGenerating}
-            />
-
-            {/* Generate Button */}
-            <TouchableOpacity
-              style={[
-                styles.generateButton,
-                {
-                  backgroundColor: isGenerating ? placeholderColor : tintColor,
-                },
-              ]}
-              onPress={handleAdvancedGeneration}
-              disabled={
-                isGenerating ||
-                (!inputText.trim() && uploadedFiles.length === 0)
-              }
-            >
-              {isGenerating ? (
-                // <ActivityIndicator size="small" color={backgroundColor} />
-                <LottieView
-                  source={require("@/assets/animations/Sushi.json")}
-                  autoPlay
-                  loop
-                  style={styles.lottieAnimation}
-                />
-              ) : (
-                <Ionicons name="sparkles" size={20} color={backgroundColor} />
-              )}
-            </TouchableOpacity>
+    <>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
+      >
+        <ThemedView style={styles.container}>
+          {/* Main Content Area */}
+          <View style={styles.contentArea}>
+            <ThemedText style={styles.subtitle}>
+              Upload files or enter a prompt to generate AI-powered notes with
+              images and comprehensive content
+            </ThemedText>
           </View>
 
-          {/* File Count Indicator */}
-          {uploadedFiles.length > 0 && (
-            <View style={styles.fileCountContainer}>
-              <Ionicons name="attach" size={16} color={tintColor} />
-              <ThemedText style={[styles.fileCountText, { color: tintColor }]}>
-                {uploadedFiles.length} file
-                {uploadedFiles.length !== 1 ? "s" : ""} attached
-              </ThemedText>
+          {/* File Previews Section - Outside animated container */}
+          {uploadedFiles.length > 0 && showUploadOptions && (
+            <View style={styles.filePreviewsContainer}>
+              <View style={styles.filesHeader}>
+                <ThemedText style={[styles.filesTitle, { color: textColor }]}>
+                  Uploaded Files ({uploadedFiles.length}/5)
+                </ThemedText>
+              </View>
+              <ScrollView
+                style={styles.filesList}
+                showsVerticalScrollIndicator={false}
+              >
+                {uploadedFiles.map((file, index) => (
+                  <View
+                    key={index}
+                    style={[
+                      styles.fileItem,
+                      {
+                        backgroundColor: backgroundColor,
+                        borderColor: `${placeholderColor}30`,
+                      },
+                    ]}
+                  >
+                    <View style={styles.fileContent}>
+                      {file.type?.startsWith("image/") ? (
+                        <Image
+                          source={{ uri: file.uri }}
+                          style={styles.filePreview}
+                          contentFit="cover"
+                        />
+                      ) : (
+                        <View
+                          style={[
+                            styles.fileIconContainer,
+                            { backgroundColor: `${tintColor}15` },
+                          ]}
+                        >
+                          <Ionicons
+                            name="document"
+                            size={20}
+                            color={tintColor}
+                          />
+                        </View>
+                      )}
+                      <View style={styles.fileInfo}>
+                        <ThemedText
+                          style={[styles.fileName, { color: textColor }]}
+                          numberOfLines={1}
+                        >
+                          {file.name}
+                        </ThemedText>
+                        <ThemedText
+                          style={[styles.fileSize, { color: placeholderColor }]}
+                        >
+                          {(file.size / 1024).toFixed(1)} KB
+                        </ThemedText>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.removeButton}
+                      onPress={() => {
+                        const newFiles = uploadedFiles.filter(
+                          (_, i) => i !== index,
+                        );
+                        setUploadedFiles(newFiles);
+                      }}
+                    >
+                      <Ionicons
+                        name="close-circle"
+                        size={20}
+                        color={placeholderColor}
+                      />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+
+              {/* Max Files Warning */}
+              {uploadedFiles.length >= 5 && (
+                <View style={styles.warningContainer}>
+                  <Ionicons name="warning" size={16} color={placeholderColor} />
+                  <ThemedText
+                    style={[styles.warningText, { color: placeholderColor }]}
+                  >
+                    Maximum 5 files reached. Remove some to add more.
+                  </ThemedText>
+                </View>
+              )}
             </View>
           )}
-        </View>
-      </ThemedView>
-    </KeyboardAvoidingView>
+
+          {/* File Upload Section */}
+          <Animated.View
+            style={[
+              styles.uploadOptionsContainer,
+              uploadOptionsAnimatedStyle,
+              { backgroundColor: backgroundColor },
+            ]}
+          >
+            <FileUploadComponent
+              onFilesChange={handleFilesChange}
+              maxFiles={5}
+              acceptedTypes={["image/*", "application/pdf", "text/plain"]}
+              disabled={isGenerating}
+              onMaxFilesWarning={(message) => error("File Upload", message)}
+              currentFileCount={uploadedFiles.length}
+            />
+          </Animated.View>
+
+          {/* Input Area */}
+          <View style={styles.inputContainer}>
+            <View style={styles.inputRow}>
+              {/* File Upload Toggle Button */}
+              <TouchableOpacity
+                style={[
+                  styles.attachButton,
+                  {
+                    backgroundColor: showUploadOptions
+                      ? placeholderColor
+                      : tintColor,
+                  },
+                ]}
+                onPress={toggleUploadOptions}
+                disabled={isGenerating}
+              >
+                <Ionicons
+                  name={showUploadOptions ? "close" : "attach"}
+                  size={24}
+                  color={backgroundColor}
+                />
+              </TouchableOpacity>
+
+              {/* Text Input */}
+              <TextInput
+                value={inputText}
+                onChangeText={setInputText}
+                placeholderTextColor={placeholderColor}
+                placeholder="Enter your prompt here..."
+                multiline
+                style={[
+                  styles.textInput,
+                  {
+                    color: textColor,
+                    backgroundColor: backgroundColor,
+                    borderColor: placeholderColor,
+                  },
+                ]}
+                editable={!isGenerating}
+              />
+
+              {/* Generate Button */}
+              <TouchableOpacity
+                style={[
+                  styles.generateButton,
+                  {
+                    backgroundColor: isGenerating
+                      ? placeholderColor
+                      : tintColor,
+                  },
+                ]}
+                onPress={handleAdvancedGeneration}
+                disabled={
+                  isGenerating ||
+                  (!inputText.trim() && uploadedFiles.length === 0)
+                }
+              >
+                {isGenerating ? (
+                  // <ActivityIndicator size="small" color={backgroundColor} />
+                  <LottieView
+                    source={require("@/assets/animations/Sushi.json")}
+                    autoPlay
+                    loop
+                    style={styles.lottieAnimation}
+                  />
+                ) : (
+                  <Ionicons name="sparkles" size={20} color={backgroundColor} />
+                )}
+              </TouchableOpacity>
+            </View>
+
+            {/* File Count Indicator */}
+            {uploadedFiles.length > 0 && (
+              <View style={styles.fileCountContainer}>
+                <Ionicons name="attach" size={16} color={tintColor} />
+                <ThemedText
+                  style={[styles.fileCountText, { color: tintColor }]}
+                >
+                  {uploadedFiles.length} file
+                  {uploadedFiles.length !== 1 ? "s" : ""} attached
+                </ThemedText>
+              </View>
+            )}
+          </View>
+        </ThemedView>
+      </KeyboardAvoidingView>
+
+      {/* Themed Alert Component - Positioned as overlay */}
+      <AlertComponent />
+    </>
   );
 };
 
@@ -528,6 +637,79 @@ const styles = StyleSheet.create({
   },
   uploadOptionsContainer: {
     overflow: "hidden",
+  },
+  filePreviewsContainer: {
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+  },
+  filesHeader: {
+    marginBottom: 12,
+  },
+  filesTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  filesList: {
+    maxHeight: 200,
+  },
+  fileItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 8,
+  },
+  fileContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+  filePreview: {
+    width: 40,
+    height: 40,
+    borderRadius: 6,
+    marginRight: 12,
+  },
+  fileIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 6,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  fileInfo: {
+    flex: 1,
+  },
+  fileName: {
+    fontSize: 14,
+    fontWeight: "500",
+    marginBottom: 2,
+  },
+  fileSize: {
+    fontSize: 12,
+  },
+  removeButton: {
+    padding: 4,
+  },
+  warningContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 12,
+    padding: 12,
+    gap: 6,
+    backgroundColor: "rgba(255, 196, 0, 0.1)",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "rgba(255, 196, 0, 0.3)",
+  },
+  warningText: {
+    fontSize: 12,
+    textAlign: "center",
+    fontWeight: "500",
   },
   inputContainer: {
     paddingHorizontal: 16,

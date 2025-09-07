@@ -4,7 +4,6 @@ import {
   StyleSheet,
   FlatList,
   TouchableOpacity,
-  Alert,
   RefreshControl,
   Modal,
   ScrollView,
@@ -20,6 +19,7 @@ import {
   deleteNotebook,
   SavedNotebook,
 } from "@/utils/storage";
+import { useThemedAlert } from "@/hooks/useThemedAlert";
 
 const Home = () => {
   const [savedNotebooks, setSavedNotebooks] = useState<SavedNotebook[]>([]);
@@ -28,6 +28,9 @@ const Home = () => {
   const [selectedNotebook, setSelectedNotebook] =
     useState<SavedNotebook | null>(null);
   const [showFullNote, setShowFullNote] = useState(false);
+
+  // Themed alert hook
+  const { confirmDestructive, error, AlertComponent } = useThemedAlert();
 
   // Theme colors
   const backgroundColor = useThemeColor({}, "background");
@@ -60,26 +63,19 @@ const Home = () => {
   );
 
   const handleDeleteNotebook = (notebook: SavedNotebook) => {
-    Alert.alert(
+    confirmDestructive(
       "Delete Note",
       `Are you sure you want to delete "${notebook.title}"?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            const success = await deleteNotebook(notebook.id);
-            if (success) {
-              setSavedNotebooks((prev) =>
-                prev.filter((n) => n.id !== notebook.id),
-              );
-            } else {
-              Alert.alert("Error", "Failed to delete notebook.");
-            }
-          },
-        },
-      ],
+      async () => {
+        const success = await deleteNotebook(notebook.id);
+        if (success) {
+          setSavedNotebooks((prev) => prev.filter((n) => n.id !== notebook.id));
+        } else {
+          error("Error", "Failed to delete notebook.");
+        }
+      },
+      undefined,
+      "Delete",
     );
   };
 
@@ -205,161 +201,173 @@ const Home = () => {
   }
 
   return (
-    <ThemedView style={styles.container}>
-      <View style={styles.header}>
-        <ThemedText type="title" style={styles.headerTitle}>
-          My Notes
-        </ThemedText>
-        <ThemedText
-          style={[styles.headerSubtitle, { color: placeholderColor }]}
+    <>
+      <ThemedView style={styles.container}>
+        <View style={styles.header}>
+          <ThemedText type="title" style={styles.headerTitle}>
+            My Notes
+          </ThemedText>
+          <ThemedText
+            style={[styles.headerSubtitle, { color: placeholderColor }]}
+          >
+            {savedNotebooks.length} saved note
+            {savedNotebooks.length !== 1 ? "s" : ""}
+          </ThemedText>
+        </View>
+
+        <FlatList
+          data={savedNotebooks}
+          renderItem={renderNotebookItem}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContainer}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={tintColor}
+            />
+          }
+          ListEmptyComponent={renderEmptyState}
+        />
+
+        {/* Full Note Modal */}
+        <Modal
+          visible={showFullNote}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={closeFullNote}
         >
-          {savedNotebooks.length} saved note
-          {savedNotebooks.length !== 1 ? "s" : ""}
-        </ThemedText>
-      </View>
-
-      <FlatList
-        data={savedNotebooks}
-        renderItem={renderNotebookItem}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContainer}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={tintColor}
-          />
-        }
-        ListEmptyComponent={renderEmptyState}
-      />
-
-      {/* Full Note Modal */}
-      <Modal
-        visible={showFullNote}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={closeFullNote}
-      >
-        <ThemedView style={styles.modalContainer}>
-          {selectedNotebook && (
-            <>
-              <View
-                style={[
-                  styles.modalHeader,
-                  { borderBottomColor: `${placeholderColor}30` },
-                ]}
-              >
-                <TouchableOpacity
-                  style={styles.closeButton}
-                  onPress={closeFullNote}
+          <ThemedView style={styles.modalContainer}>
+            {selectedNotebook && (
+              <>
+                <View
+                  style={[
+                    styles.modalHeader,
+                    { borderBottomColor: `${placeholderColor}30` },
+                  ]}
                 >
-                  <Ionicons name="close" size={24} color={tintColor} />
-                </TouchableOpacity>
-                <ThemedText
-                  style={[styles.modalTitle, { color: textColor }]}
-                  numberOfLines={1}
-                >
-                  {selectedNotebook.title}
-                </ThemedText>
-                <View style={styles.placeholder} />
-              </View>
+                  <TouchableOpacity
+                    style={styles.closeButton}
+                    onPress={closeFullNote}
+                  >
+                    <Ionicons name="close" size={24} color={tintColor} />
+                  </TouchableOpacity>
+                  <ThemedText
+                    style={[styles.modalTitle, { color: textColor }]}
+                    numberOfLines={1}
+                  >
+                    {selectedNotebook.title}
+                  </ThemedText>
+                  <View style={styles.placeholder} />
+                </View>
 
-              <ScrollView
-                style={styles.modalContent}
-                showsVerticalScrollIndicator={false}
-              >
-                {selectedNotebook.content
-                  .filter((item, index) => {
-                    // Skip the first heading if it matches the notebook title
-                    if (
-                      index === 0 &&
-                      item.type === "heading" &&
-                      item.content
-                        .toLowerCase()
-                        .includes(
-                          selectedNotebook.title.toLowerCase().split(":")[0],
-                        )
-                    ) {
-                      return false;
-                    }
-                    return true;
-                  })
-                  .map((item, index) => (
-                    <View key={index} style={styles.contentItem}>
-                      {item.type === "heading" && (
-                        <ThemedText
-                          style={[styles.modalHeading, { color: textColor }]}
-                        >
-                          {item.content}
-                        </ThemedText>
-                      )}
-                      {item.type === "subheading" && (
-                        <ThemedText
-                          style={[styles.modalSubheading, { color: textColor }]}
-                        >
-                          {item.content}
-                        </ThemedText>
-                      )}
-                      {item.type === "text" && (
-                        <ThemedText
-                          style={[styles.modalText, { color: textColor }]}
-                        >
-                          {item.content}
-                        </ThemedText>
-                      )}
-                      {item.type === "image" && (
-                        <View style={styles.modalImageContainer}>
-                          {item.imageData &&
-                          item.mimeType !== "image/placeholder" &&
-                          item.imageData.startsWith("data:image") ? (
-                            <Image
-                              source={{ uri: item.imageData }}
-                              style={styles.modalImage}
-                              contentFit="cover"
-                            />
-                          ) : (
-                            <View
-                              style={[
-                                styles.modalImagePlaceholder,
-                                {
-                                  backgroundColor: [
-                                    "#FF6B6B",
-                                    "#4ECDC4",
-                                    "#45B7D1",
-                                    "#96CEB4",
-                                    "#FFEAA7",
-                                    "#DDA0DD",
-                                  ][index % 6],
-                                },
-                              ]}
-                            >
-                              <Ionicons name="image" size={32} color="white" />
-                              <ThemedText
-                                style={styles.modalImagePlaceholderText}
-                              >
-                                Generated Image
-                              </ThemedText>
-                            </View>
-                          )}
+                <ScrollView
+                  style={styles.modalContent}
+                  showsVerticalScrollIndicator={false}
+                >
+                  {selectedNotebook.content
+                    .filter((item, index) => {
+                      // Skip the first heading if it matches the notebook title
+                      if (
+                        index === 0 &&
+                        item.type === "heading" &&
+                        item.content
+                          .toLowerCase()
+                          .includes(
+                            selectedNotebook.title.toLowerCase().split(":")[0],
+                          )
+                      ) {
+                        return false;
+                      }
+                      return true;
+                    })
+                    .map((item, index) => (
+                      <View key={index} style={styles.contentItem}>
+                        {item.type === "heading" && (
+                          <ThemedText
+                            style={[styles.modalHeading, { color: textColor }]}
+                          >
+                            {item.content}
+                          </ThemedText>
+                        )}
+                        {item.type === "subheading" && (
                           <ThemedText
                             style={[
-                              styles.modalImageCaption,
-                              { color: placeholderColor },
+                              styles.modalSubheading,
+                              { color: textColor },
                             ]}
                           >
                             {item.content}
                           </ThemedText>
-                        </View>
-                      )}
-                    </View>
-                  ))}
-              </ScrollView>
-            </>
-          )}
-        </ThemedView>
-      </Modal>
-    </ThemedView>
+                        )}
+                        {item.type === "text" && (
+                          <ThemedText
+                            style={[styles.modalText, { color: textColor }]}
+                          >
+                            {item.content}
+                          </ThemedText>
+                        )}
+                        {item.type === "image" && (
+                          <View style={styles.modalImageContainer}>
+                            {item.imageData &&
+                            item.mimeType !== "image/placeholder" &&
+                            item.imageData.startsWith("data:image") ? (
+                              <Image
+                                source={{ uri: item.imageData }}
+                                style={styles.modalImage}
+                                contentFit="cover"
+                              />
+                            ) : (
+                              <View
+                                style={[
+                                  styles.modalImagePlaceholder,
+                                  {
+                                    backgroundColor: [
+                                      "#FF6B6B",
+                                      "#4ECDC4",
+                                      "#45B7D1",
+                                      "#96CEB4",
+                                      "#FFEAA7",
+                                      "#DDA0DD",
+                                    ][index % 6],
+                                  },
+                                ]}
+                              >
+                                <Ionicons
+                                  name="image"
+                                  size={32}
+                                  color="white"
+                                />
+                                <ThemedText
+                                  style={styles.modalImagePlaceholderText}
+                                >
+                                  Generated Image
+                                </ThemedText>
+                              </View>
+                            )}
+                            <ThemedText
+                              style={[
+                                styles.modalImageCaption,
+                                { color: placeholderColor },
+                              ]}
+                            >
+                              {item.content}
+                            </ThemedText>
+                          </View>
+                        )}
+                      </View>
+                    ))}
+                </ScrollView>
+              </>
+            )}
+          </ThemedView>
+        </Modal>
+      </ThemedView>
+
+      {/* Themed Alert Component - Positioned as overlay */}
+      <AlertComponent />
+    </>
   );
 };
 
