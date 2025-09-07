@@ -128,7 +128,7 @@ const Settings = () => {
                 [
                   {
                     text: "Start Fresh",
-                    onPress: () => router.replace("/onboarding"),
+                    onPress: () => router.replace("/"),
                   },
                 ],
               );

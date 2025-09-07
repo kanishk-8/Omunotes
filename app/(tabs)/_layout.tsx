@@ -1,7 +1,4 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-
-import { useState, useEffect } from "react";
-import { useRouter, Tabs } from "expo-router";
+import { Tabs } from "expo-router";
 import { HapticTab } from "@/components/HapticTab";
 
 import { Colors } from "@/constants/Colors";
@@ -10,31 +7,6 @@ import { FontAwesome6, Ionicons } from "@expo/vector-icons";
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
-  const [isLoading, setIsLoading] = useState(true);
-  const router = useRouter();
-
-  useEffect(() => {
-    const checkOnboardingStatus = async () => {
-      try {
-        const hasCompletedOnboarding = await AsyncStorage.getItem(
-          "hasCompletedOnboarding",
-        );
-        if (!hasCompletedOnboarding) {
-          router.replace("/onboarding");
-        }
-      } catch (error) {
-        console.error("Error checking onboarding status:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    checkOnboardingStatus();
-  }, [router]);
-
-  if (isLoading) {
-    return null;
-  }
   return (
     <Tabs
       screenOptions={{

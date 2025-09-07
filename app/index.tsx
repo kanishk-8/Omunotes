@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   View,
   StyleSheet,
@@ -89,6 +89,7 @@ const onboardingData: OnboardingSlide[] = [
 const OnboardingScreen = () => {
   const router = useRouter();
   const [currentSlide, setCurrentSlide] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
   const scrollViewRef = useRef<ScrollView>(null);
   const slideAnimation = useRef(new Animated.Value(0)).current;
 
@@ -97,6 +98,26 @@ const OnboardingScreen = () => {
   const textColor = useThemeColor({}, "text");
   const tintColor = useThemeColor({}, "tint");
   const iconColor = useThemeColor({}, "icon");
+
+  useEffect(() => {
+    const checkOnboardingStatus = async () => {
+      try {
+        const hasCompletedOnboarding = await AsyncStorage.getItem(
+          "hasCompletedOnboarding",
+        );
+        if (hasCompletedOnboarding) {
+          router.replace("/(tabs)/home");
+          return;
+        }
+      } catch (error) {
+        console.error("Error checking onboarding status:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    checkOnboardingStatus();
+  }, [router]);
 
   const handleGetStarted = async () => {
     try {
@@ -234,6 +255,24 @@ const OnboardingScreen = () => {
       ))}
     </View>
   );
+
+  if (isLoading) {
+    return (
+      <ThemedView style={[styles.container, { backgroundColor }]}>
+        <View style={styles.loadingContainer}>
+          <LottieView
+            source={require("../assets/animations/Sushi.json")}
+            autoPlay
+            loop
+            style={styles.loadingAnimation}
+          />
+          <ThemedText style={[styles.loadingText, { color: textColor }]}>
+            Loading...
+          </ThemedText>
+        </View>
+      </ThemedView>
+    );
+  }
 
   return (
     <ThemedView style={[styles.container, { backgroundColor }]}>
@@ -484,6 +523,21 @@ const styles = StyleSheet.create({
     bottom: 200,
     left: -30,
     opacity: 0.2,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingAnimation: {
+    width: 200,
+    height: 200,
+  },
+  loadingText: {
+    fontSize: 18,
+    fontWeight: "500",
+    marginTop: 20,
+    opacity: 0.8,
   },
 });
 
