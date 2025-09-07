@@ -9,6 +9,8 @@ import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useColorScheme } from "@/hooks/useColorScheme";
+import { useEffect } from "react";
+import { initializeDatabase } from "@/utils/database";
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -16,6 +18,13 @@ export default function RootLayout() {
     SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
     HandWritten: require("../assets/fonts/Days of Charity.otf"),
   });
+
+  // Initialize database when app starts
+  useEffect(() => {
+    initializeDatabase().catch((error) => {
+      console.error("Failed to initialize database:", error);
+    });
+  }, []);
 
   if (!loaded) {
     // Async font loading only occurs in development.

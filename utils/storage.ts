@@ -1,7 +1,5 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { GeneratedNotebook } from "./gemini";
-
-const STORAGE_KEY = "saved_notebooks";
+import { getDatabase } from "./database";
 
 export interface SavedNotebook extends GeneratedNotebook {
   savedAt: string;
@@ -37,16 +35,16 @@ const checkStorageSpace = async (): Promise<{
     const stats = await getStorageStats();
     const sizeInMB = parseFloat(stats.totalSize.replace(" MB", ""));
 
-    // Warn if storage is getting large (>100MB)
-    if (sizeInMB > 100) {
+    // Conservative storage limits
+    if (sizeInMB > 50) {
       return {
         hasSpace: false,
         message: `Current storage: ${stats.totalSize}. Please delete some notes to free up space.`,
       };
     }
 
-    // Warn if too many notebooks
-    if (stats.totalNotebooks > 200) {
+    // Conservative notebook count
+    if (stats.totalNotebooks > 50) {
       return {
         hasSpace: false,
         message: `You have ${stats.totalNotebooks} notes. Please delete some older notes.`,
@@ -63,11 +61,22 @@ const checkStorageSpace = async (): Promise<{
 // Get all saved notebooks
 export const getSavedNotebooks = async (): Promise<SavedNotebook[]> => {
   try {
-    const savedData = await AsyncStorage.getItem(STORAGE_KEY);
-    if (savedData) {
-      return JSON.parse(savedData);
-    }
-    return [];
+    const database = await getDatabase();
+    const result = await database.getAllAsync(
+      "SELECT * FROM notebooks ORDER BY savedAt DESC",
+    );
+
+    return result.map((row: any) => ({
+      id: row.id,
+      title: row.title,
+      content: JSON.parse(row.content),
+      structure: JSON.parse(row.structure),
+      wordCount: row.wordCount,
+      totalImages: row.totalImages,
+      createdAt: row.createdAt,
+      savedAt: row.savedAt,
+      isSaved: Boolean(row.isSaved),
+    }));
   } catch (error) {
     console.error("Error getting saved notebooks:", error);
     return [];
@@ -79,12 +88,29 @@ export const saveNotebook = async (
   notebook: GeneratedNotebook,
 ): Promise<boolean> => {
   try {
-    let existingNotebooks = await getSavedNotebooks();
+    const database = await getDatabase();
 
-    // Check if notebook already exists
-    const existingIndex = existingNotebooks.findIndex(
-      (saved) => saved.id === notebook.id,
-    );
+    // PROACTIVE STORAGE CHECK - Check before attempting to save
+    const storageCheck = await checkStorageSpace();
+
+    // If storage space is an issue, try cleanup first
+    if (!storageCheck.hasSpace) {
+      console.log(
+        "Storage check failed, attempting cleanup:",
+        storageCheck.message,
+      );
+
+      // Perform cleanup before saving
+      await cleanupStorage();
+
+      // Check again after cleanup
+      const postCleanupCheck = await checkStorageSpace();
+      if (!postCleanupCheck.hasSpace) {
+        throw new Error(
+          `Storage full after cleanup: ${postCleanupCheck.message}`,
+        );
+      }
+    }
 
     // Optimize notebook data before saving
     const optimizedNotebook = optimizeNotebookForStorage(notebook);
@@ -95,22 +121,69 @@ export const saveNotebook = async (
       isSaved: true,
     };
 
-    if (existingIndex >= 0) {
+    // Check if notebook already exists
+    const existingNotebook = await database.getFirstAsync(
+      "SELECT id FROM notebooks WHERE id = ?",
+      [notebook.id],
+    );
+
+    if (existingNotebook) {
       // Update existing notebook
-      existingNotebooks[existingIndex] = savedNotebook;
+      await database.runAsync(
+        `UPDATE notebooks SET
+         title = ?, content = ?, structure = ?, wordCount = ?,
+         totalImages = ?, savedAt = ?, isSaved = ?
+         WHERE id = ?`,
+        [
+          savedNotebook.title,
+          JSON.stringify(savedNotebook.content),
+          JSON.stringify(savedNotebook.structure),
+          savedNotebook.wordCount || 0,
+          savedNotebook.totalImages || 0,
+          savedNotebook.savedAt,
+          1,
+          savedNotebook.id,
+        ],
+      );
     } else {
       // Auto-cleanup if we have too many notebooks
-      if (existingNotebooks.length >= 50) {
-        // Keep only the 40 most recent notebooks
-        existingNotebooks = existingNotebooks.slice(0, 40);
+      const countResult = await database.getFirstAsync(
+        "SELECT COUNT(*) as count FROM notebooks",
+      );
+      const notebookCount = (countResult as any)?.count || 0;
+
+      if (notebookCount >= 30) {
+        // Keep only the 25 most recent notebooks
+        await database.runAsync(`
+          DELETE FROM notebooks
+          WHERE id NOT IN (
+            SELECT id FROM notebooks
+            ORDER BY savedAt DESC
+            LIMIT 25
+          )
+        `);
       }
 
-      // Add new notebook to the beginning of the array
-      existingNotebooks.unshift(savedNotebook);
+      // Insert new notebook
+      await database.runAsync(
+        `INSERT INTO notebooks
+         (id, title, content, structure, wordCount, totalImages, createdAt, savedAt, isSaved)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          savedNotebook.id,
+          savedNotebook.title,
+          JSON.stringify(savedNotebook.content),
+          JSON.stringify(savedNotebook.structure),
+          savedNotebook.wordCount || 0,
+          savedNotebook.totalImages || 0,
+          savedNotebook.createdAt,
+          savedNotebook.savedAt,
+          1,
+        ],
+      );
     }
 
-    // Try to save with retry and cleanup
-    return await saveWithRetry(existingNotebooks);
+    return true;
   } catch (error) {
     console.error("Error saving notebook:", error);
 
@@ -140,13 +213,12 @@ export const saveNotebook = async (
 // Delete a notebook
 export const deleteNotebook = async (notebookId: string): Promise<boolean> => {
   try {
-    const existingNotebooks = await getSavedNotebooks();
-    const filteredNotebooks = existingNotebooks.filter(
-      (notebook) => notebook.id !== notebookId,
+    const database = await getDatabase();
+    const result = await database.runAsync(
+      "DELETE FROM notebooks WHERE id = ?",
+      [notebookId],
     );
-
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(filteredNotebooks));
-    return true;
+    return result.changes > 0;
   } catch (error) {
     console.error("Error deleting notebook:", error);
     return false;
@@ -156,8 +228,12 @@ export const deleteNotebook = async (notebookId: string): Promise<boolean> => {
 // Check if a notebook is saved
 export const isNotebookSaved = async (notebookId: string): Promise<boolean> => {
   try {
-    const savedNotebooks = await getSavedNotebooks();
-    return savedNotebooks.some((notebook) => notebook.id === notebookId);
+    const database = await getDatabase();
+    const result = await database.getFirstAsync(
+      "SELECT id FROM notebooks WHERE id = ?",
+      [notebookId],
+    );
+    return !!result;
   } catch (error) {
     console.error("Error checking if notebook is saved:", error);
     return false;
@@ -169,10 +245,26 @@ export const getNotebookById = async (
   notebookId: string,
 ): Promise<SavedNotebook | null> => {
   try {
-    const savedNotebooks = await getSavedNotebooks();
-    return (
-      savedNotebooks.find((notebook) => notebook.id === notebookId) || null
+    const database = await getDatabase();
+    const result = await database.getFirstAsync(
+      "SELECT * FROM notebooks WHERE id = ?",
+      [notebookId],
     );
+
+    if (!result) return null;
+
+    const row = result as any;
+    return {
+      id: row.id,
+      title: row.title,
+      content: JSON.parse(row.content),
+      structure: JSON.parse(row.structure),
+      wordCount: row.wordCount,
+      totalImages: row.totalImages,
+      createdAt: row.createdAt,
+      savedAt: row.savedAt,
+      isSaved: Boolean(row.isSaved),
+    };
   } catch (error) {
     console.error("Error getting notebook by ID:", error);
     return null;
@@ -185,21 +277,12 @@ export const updateNotebookTitle = async (
   newTitle: string,
 ): Promise<boolean> => {
   try {
-    const existingNotebooks = await getSavedNotebooks();
-    const notebookIndex = existingNotebooks.findIndex(
-      (notebook) => notebook.id === notebookId,
+    const database = await getDatabase();
+    const result = await database.runAsync(
+      "UPDATE notebooks SET title = ?, savedAt = ? WHERE id = ?",
+      [newTitle, new Date().toISOString(), notebookId],
     );
-
-    if (notebookIndex >= 0) {
-      existingNotebooks[notebookIndex].title = newTitle;
-      existingNotebooks[notebookIndex].savedAt = new Date().toISOString();
-      await AsyncStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify(existingNotebooks),
-      );
-      return true;
-    }
-    return false;
+    return result.changes > 0;
   } catch (error) {
     console.error("Error updating notebook title:", error);
     return false;
@@ -212,13 +295,29 @@ export const getStorageStats = async (): Promise<{
   totalSize: string;
 }> => {
   try {
-    const savedNotebooks = await getSavedNotebooks();
-    const dataString = JSON.stringify(savedNotebooks);
-    const sizeInBytes = new TextEncoder().encode(dataString).length;
-    const sizeInMB = (sizeInBytes / (1024 * 1024)).toFixed(2);
+    const database = await getDatabase();
+
+    // Get notebook count
+    const countResult = await database.getFirstAsync(
+      "SELECT COUNT(*) as count FROM notebooks",
+    );
+    const totalNotebooks = (countResult as any)?.count || 0;
+
+    // Get total size by querying all content and calculating size
+    const notebooks = await database.getAllAsync(
+      "SELECT content FROM notebooks",
+    );
+    let totalSizeBytes = 0;
+
+    for (const notebook of notebooks) {
+      const contentString = (notebook as any).content;
+      totalSizeBytes += new TextEncoder().encode(contentString).length;
+    }
+
+    const sizeInMB = (totalSizeBytes / (1024 * 1024)).toFixed(2);
 
     return {
-      totalNotebooks: savedNotebooks.length,
+      totalNotebooks,
       totalSize: `${sizeInMB} MB`,
     };
   } catch (error) {
@@ -233,17 +332,26 @@ export const getStorageStats = async (): Promise<{
 // Cleanup old or large notebooks
 export const cleanupStorage = async (): Promise<boolean> => {
   try {
-    const notebooks = await getSavedNotebooks();
+    const database = await getDatabase();
 
-    // Remove notebooks older than 1 year
-    const oneYearAgo = new Date();
-    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    // Remove notebooks older than 6 months
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
-    const filteredNotebooks = notebooks
-      .filter((notebook) => new Date(notebook.savedAt) > oneYearAgo)
-      .slice(0, 100); // Keep only 100 most recent
+    await database.runAsync("DELETE FROM notebooks WHERE savedAt < ?", [
+      sixMonthsAgo.toISOString(),
+    ]);
 
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(filteredNotebooks));
+    // Keep only 40 most recent notebooks
+    await database.runAsync(`
+      DELETE FROM notebooks
+      WHERE id NOT IN (
+        SELECT id FROM notebooks
+        ORDER BY savedAt DESC
+        LIMIT 40
+      )
+    `);
+
     return true;
   } catch (error) {
     console.error("Error cleaning up storage:", error);
@@ -251,60 +359,36 @@ export const cleanupStorage = async (): Promise<boolean> => {
   }
 };
 
-// Save with retry and automatic cleanup
-const saveWithRetry = async (notebooks: SavedNotebook[]): Promise<boolean> => {
-  try {
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(notebooks));
-    return true;
-  } catch (error: any) {
-    if (
-      error.message?.includes("SQLITE_FULL") ||
-      error.message?.includes("database or disk is full")
-    ) {
-      // Emergency cleanup - keep 3/4 of the notebooks
-      const reducedNotebooks = notebooks.slice(
-        0,
-        Math.ceil((notebooks.length * 3) / 4),
-      );
-      try {
-        await AsyncStorage.setItem(
-          STORAGE_KEY,
-          JSON.stringify(reducedNotebooks),
-        );
-        return true;
-      } catch (retryError) {
-        // If still failing, keep only half with full content including images
-        const minimalNotebooks = notebooks.slice(
-          0,
-          Math.ceil(notebooks.length / 2),
-        );
-        await AsyncStorage.setItem(
-          STORAGE_KEY,
-          JSON.stringify(minimalNotebooks),
-        );
-        return true;
-      }
-    }
-    throw error;
-  }
-};
-
 // Emergency cleanup function
 const emergencyCleanup = async (): Promise<void> => {
   try {
-    const notebooks = await getSavedNotebooks();
-    // Keep only 10 most recent notebooks with full content including images
-    const cleanedNotebooks = notebooks.slice(0, 10);
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(cleanedNotebooks));
-  } catch (error) {
+    const database = await getDatabase();
+
+    // Keep only 10 most recent notebooks
+    await database.runAsync(`
+      DELETE FROM notebooks
+      WHERE id NOT IN (
+        SELECT id FROM notebooks
+        ORDER BY savedAt DESC
+        LIMIT 10
+      )
+    `);
+  } catch {
     try {
-      // If still failing, keep only 5 most recent with full content
-      const notebooks = await getSavedNotebooks();
-      const minimalNotebooks = notebooks.slice(0, 5);
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(minimalNotebooks));
-    } catch (finalError) {
+      // If still failing, keep only 5 most recent
+      const database = await getDatabase();
+      await database.runAsync(`
+        DELETE FROM notebooks
+        WHERE id NOT IN (
+          SELECT id FROM notebooks
+          ORDER BY savedAt DESC
+          LIMIT 5
+        )
+      `);
+    } catch {
       // If all else fails, clear everything
-      await AsyncStorage.removeItem(STORAGE_KEY);
+      const database = await getDatabase();
+      await database.runAsync("DELETE FROM notebooks");
     }
   }
 };
@@ -312,7 +396,8 @@ const emergencyCleanup = async (): Promise<void> => {
 // Clear all saved notebooks
 export const clearAllNotebooks = async (): Promise<boolean> => {
   try {
-    await AsyncStorage.removeItem(STORAGE_KEY);
+    const database = await getDatabase();
+    await database.runAsync("DELETE FROM notebooks");
     return true;
   } catch (error) {
     console.error("Error clearing all notebooks:", error);

@@ -171,8 +171,7 @@ const Create = () => {
 
       if (
         errorMessage.includes("Storage full") ||
-        errorMessage.includes("storage is full") ||
-        errorMessage.includes("cleaned up")
+        errorMessage.includes("storage is full")
       ) {
         Alert.alert("Storage Optimized", errorMessage, [
           { text: "OK", style: "default" },
