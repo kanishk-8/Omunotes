@@ -100,34 +100,44 @@ const Settings = () => {
     return value.substring(0, 4) + "..." + value.substring(value.length - 4);
   };
 
-  const handleResetOnboarding = async () => {
+  const handleResetApp = async () => {
     Alert.alert(
-      "Reset Onboarding",
-      "This will reset your onboarding status and you'll see the onboarding screen again. Continue?",
+      "Reset App",
+      "This will completely reset the app and delete ALL data including saved notes, API keys, settings, and onboarding status. This action cannot be undone!",
       [
         {
           text: "Cancel",
           style: "cancel",
         },
         {
-          text: "Reset",
+          text: "Reset Everything",
           style: "destructive",
           onPress: async () => {
             try {
-              await AsyncStorage.removeItem("hasCompletedOnboarding");
+              // Clear all AsyncStorage data
+              await AsyncStorage.clear();
+
+              // Reset local state
+              setApiKey(null);
+              setNewKeyValue("");
+              setShowAddForm(false);
+
               Alert.alert(
-                "Success",
-                "Onboarding status reset! The app will now show onboarding on next navigation.",
+                "App Reset Complete",
+                "All app data has been cleared. The app will now restart with onboarding.",
                 [
                   {
-                    text: "Go to Onboarding",
+                    text: "Start Fresh",
                     onPress: () => router.replace("/onboarding"),
                   },
                 ],
               );
             } catch (error) {
-              console.error("Error resetting onboarding:", error);
-              Alert.alert("Error", "Failed to reset onboarding status.");
+              console.error("Error resetting app:", error);
+              Alert.alert(
+                "Error",
+                "Failed to reset app data. Please try again.",
+              );
             }
           },
         },
@@ -137,9 +147,18 @@ const Settings = () => {
 
   return (
     <ThemedView style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {/*<ThemedText style={styles.title}>Settings</ThemedText>*/}
+      <View style={styles.header}>
+        <ThemedText type="title" style={styles.headerTitle}>
+          Settings
+        </ThemedText>
+        <ThemedText
+          style={[styles.headerSubtitle, { color: placeholderColor }]}
+        >
+          Manage your app preferences and API keys
+        </ThemedText>
+      </View>
 
+      <ScrollView showsVerticalScrollIndicator={false}>
         {/* API Keys Section */}
         <View style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Gemini API Key</ThemedText>
@@ -265,13 +284,14 @@ const Settings = () => {
         <View style={styles.section}>
           <ThemedText style={styles.sectionTitle}>Reset App</ThemedText>
           <ThemedButton
-            title="Reset Onboarding"
-            onPress={handleResetOnboarding}
+            title="Reset App"
+            onPress={handleResetApp}
             style={styles.button}
           />
           <ThemedText style={styles.description}>
-            This will reset your App and clear all your data including API keys
-            and saved notes.
+            This will completely reset the app and permanently delete ALL data
+            including saved notes, API keys, settings, and preferences. This
+            action cannot be undone.
           </ThemedText>
         </View>
       </ScrollView>
@@ -282,7 +302,20 @@ const Settings = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 20,
+    paddingTop: 50,
+  },
+  header: {
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 16,
+  },
+  headerTitle: {
+    fontSize: 32,
+    marginBottom: 4,
+  },
+  headerSubtitle: {
+    fontSize: 16,
+    opacity: 0.8,
   },
   title: {
     fontSize: 24,
@@ -291,6 +324,7 @@ const styles = StyleSheet.create({
   },
   section: {
     marginBottom: 30,
+    paddingHorizontal: 20,
   },
   fullWidthButton: {
     flexDirection: "row",

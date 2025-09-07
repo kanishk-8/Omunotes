@@ -3,7 +3,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useState, useEffect } from "react";
 import { useRouter, Tabs } from "expo-router";
 import { HapticTab } from "@/components/HapticTab";
-import { TouchableOpacity, Alert } from "react-native";
 
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
@@ -61,6 +60,7 @@ export default function TabLayout() {
         name="home"
         options={{
           title: "Notes",
+          headerShown: false,
           tabBarIcon: ({ color, focused }) => {
             return (
               <FontAwesome6
@@ -76,6 +76,7 @@ export default function TabLayout() {
         name="create"
         options={{
           title: "Create Notes",
+          headerShown: false,
           tabBarIcon: ({ color, focused }) => {
             return (
               <FontAwesome6
@@ -91,6 +92,7 @@ export default function TabLayout() {
         name="settings"
         options={{
           title: "Settings",
+          headerShown: false,
           tabBarIcon: ({ color, focused }) => {
             return (
               <Ionicons
