@@ -14,7 +14,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#FFFFFF"
+        "backgroundColor": "#00FFFFFF"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.kanishk8.Omunotes"
@@ -32,7 +32,7 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "transparent"
+          "backgroundColor": "#00FFFFFF"
         }
       ],
       "expo-sqlite"
