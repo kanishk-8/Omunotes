@@ -166,30 +166,112 @@ const safeJsonParse = (text: string): any => {
 
 // Fallback structure when JSON parsing fails
 const createFallbackStructure = (prompt: string): NotesStructure => {
-  return {
-    title: `Notes: ${prompt.substring(0, 50)}${prompt.length > 50 ? "..." : ""}`,
-    sections: [
+  // Extract key topics from the prompt for better structure
+  const cleanPrompt = prompt.toLowerCase().trim();
+  let mainTopic = "General Topic";
+  let sections = [];
+
+  // Try to identify the main subject
+  if (
+    cleanPrompt.includes("explain") ||
+    cleanPrompt.includes("what is") ||
+    cleanPrompt.includes("define")
+  ) {
+    mainTopic = prompt.substring(0, 60);
+    sections = [
       {
-        heading: "Introduction",
-        subsections: ["Overview", "Key Points"],
+        heading: "Definition and Overview",
+        subsections: ["Basic Concepts", "Key Terms", "Background Information"],
         imagePrompts: [],
         imagePositions: [],
       },
       {
-        heading: "Main Content",
-        subsections: ["Details", "Examples", "Analysis"],
+        heading: "Detailed Explanation",
+        subsections: ["Core Principles", "How It Works", "Important Features"],
+        imagePrompts: [],
+        imagePositions: [],
+      },
+      {
+        heading: "Examples and Applications",
+        subsections: [
+          "Real-world Examples",
+          "Use Cases",
+          "Practical Applications",
+        ],
+        imagePrompts: [],
+        imagePositions: [],
+      },
+    ];
+  } else if (
+    cleanPrompt.includes("compare") ||
+    cleanPrompt.includes("difference") ||
+    cleanPrompt.includes("vs")
+  ) {
+    mainTopic = prompt.substring(0, 60);
+    sections = [
+      {
+        heading: "Introduction to Comparison",
+        subsections: ["Overview", "Context"],
+        imagePrompts: [],
+        imagePositions: [],
+      },
+      {
+        heading: "Key Differences",
+        subsections: [
+          "Major Distinctions",
+          "Comparative Analysis",
+          "Pros and Cons",
+        ],
+        imagePrompts: [],
+        imagePositions: [],
+      },
+      {
+        heading: "Conclusion",
+        subsections: [
+          "Summary of Differences",
+          "Which to Choose",
+          "Final Thoughts",
+        ],
+        imagePrompts: [],
+        imagePositions: [],
+      },
+    ];
+  } else {
+    // Default comprehensive structure
+    mainTopic = prompt.substring(0, 60);
+    sections = [
+      {
+        heading: "Introduction",
+        subsections: ["Overview", "Background", "Importance"],
+        imagePrompts: [],
+        imagePositions: [],
+      },
+      {
+        heading: "Core Content",
+        subsections: ["Key Points", "Detailed Information", "Analysis"],
+        imagePrompts: [],
+        imagePositions: [],
+      },
+      {
+        heading: "Practical Aspects",
+        subsections: ["Examples", "Applications", "Implementation"],
         imagePrompts: [],
         imagePositions: [],
       },
       {
         heading: "Summary",
-        subsections: ["Key Takeaways", "Conclusion"],
+        subsections: ["Key Takeaways", "Conclusion", "Next Steps"],
         imagePrompts: [],
         imagePositions: [],
       },
-    ],
+    ];
+  }
+
+  return {
+    title: `Notes: ${mainTopic}${prompt.length > 60 ? "..." : ""}`,
+    sections: sections,
     totalImages: 0,
-    contentPrompt: `Create comprehensive notes about: ${prompt}`,
+    contentPrompt: `Create comprehensive educational notes about: ${prompt}. Focus on clear explanations, practical examples, and structured learning content.`,
   };
 };
 
@@ -356,21 +438,34 @@ const generateImages = async (
     for (let i = 0; i < imagePrompts.length; i++) {
       const prompt = imagePrompts[i];
 
-      const enhancedPrompt = `Create a high-quality, educational illustration for: ${prompt}.
-      Style: Clean, modern, informative, suitable for educational notes.
-      Avoid text overlays, keep it visually clear and professional.`;
+      // Enhanced prompt following Gemini best practices for educational illustrations
+      const enhancedPrompt = `Create a high-quality educational illustration showing ${prompt}.
+
+The image should be a clean, modern diagram with the following characteristics:
+- Professional, academic style suitable for educational materials
+- Clear visual hierarchy with well-organized information
+- Minimal but legible text labels where necessary
+- Good contrast and readability with a clean background
+- Informative visual elements that enhance understanding
+- Modern flat design aesthetic with appropriate use of color
+- Suitable for inclusion in educational notes and study materials
+
+Style: Clean vector illustration, educational infographic style, professional appearance.`;
 
       try {
-        // Try using the image generation model first
+        console.log(
+          `Generating image ${i + 1}/${imagePrompts.length}: ${prompt}`,
+        );
+
         const response = await retryWithBackoff(() =>
           genAI.models.generateContent({
             model: "gemini-2.5-flash-image-preview",
-            contents: enhancedPrompt,
+            contents: [{ text: enhancedPrompt }],
             config: {
-              temperature: 0.7,
+              temperature: 0.8,
               topK: 40,
               topP: 0.95,
-              maxOutputTokens: 1024,
+              maxOutputTokens: 2048,
               safetySettings: [
                 {
                   category: HarmCategory.HARM_CATEGORY_HARASSMENT,
@@ -393,64 +488,87 @@ const generateImages = async (
           }),
         );
 
-        // Check if response contains image data
-        if (response.candidates && response.candidates[0]?.content?.parts) {
-          const imagePart = response.candidates[0].content.parts.find((part) =>
-            part.inlineData?.mimeType?.startsWith("image/"),
-          );
+        console.log(`Image generation response received for prompt ${i + 1}`);
 
-          if (imagePart?.inlineData?.data) {
-            generatedImages.push({
-              id: `img_${Date.now()}_${i}`,
-              prompt: prompt,
-              position: i,
-              base64Data: `data:${imagePart.inlineData.mimeType || "image/png"};base64,${imagePart.inlineData.data}`,
-              mimeType: imagePart.inlineData.mimeType || "image/png",
-            });
-          } else {
-            // Fallback to placeholder if no image data
-            console.log(`No image data returned for prompt: ${prompt}`);
-            generatedImages.push({
-              id: `img_${Date.now()}_${i}`,
-              prompt: prompt,
-              position: i,
-              base64Data: `placeholder_${i}`,
-              mimeType: "image/placeholder",
-            });
+        // Check if response contains parts
+        if (response?.candidates?.[0]?.content?.parts) {
+          let imageGenerated = false;
+
+          // Look through all parts for image data
+          for (const part of response.candidates[0].content.parts) {
+            if (part.inlineData && part.inlineData.data) {
+              console.log(
+                `Found image data for prompt ${i + 1}, mime type: ${part.inlineData.mimeType}`,
+              );
+
+              generatedImages.push({
+                id: `img_${Date.now()}_${i}`,
+                prompt: prompt,
+                position: i,
+                base64Data: `data:${part.inlineData.mimeType || "image/png"};base64,${part.inlineData.data}`,
+                mimeType: part.inlineData.mimeType || "image/png",
+              });
+              imageGenerated = true;
+              break;
+            }
+          }
+
+          if (!imageGenerated) {
+            console.log(
+              `No image data found in response for prompt: ${prompt}`,
+            );
+            // Skip this image instead of adding placeholder
+            console.log(`Skipping image generation for: ${prompt}`);
           }
         } else {
-          // Fallback to placeholder
-          generatedImages.push({
-            id: `img_${Date.now()}_${i}`,
-            prompt: prompt,
-            position: i,
-            base64Data: `placeholder_${i}`,
-            mimeType: "image/placeholder",
-          });
+          console.log(`Invalid response structure for prompt: ${prompt}`);
+          // Skip this image instead of adding placeholder
         }
-      } catch (imageError) {
-        console.warn(
+      } catch (imageError: any) {
+        console.error(
           `Failed to generate image for prompt: ${prompt}`,
           imageError,
         );
-        // Add placeholder even if generation fails
-        generatedImages.push({
-          id: `img_${Date.now()}_${i}`,
-          prompt: prompt,
-          position: i,
-          base64Data: `placeholder_${i}`,
-          mimeType: "image/placeholder",
-        });
+
+        // Only skip if it's an API-related error, don't add placeholder
+        if (
+          imageError.message?.includes("QUOTA_EXCEEDED") ||
+          imageError.message?.includes("PERMISSION_DENIED") ||
+          imageError.message?.includes("API_KEY_INVALID")
+        ) {
+          console.log(`Skipping image due to API error: ${imageError.message}`);
+        } else {
+          console.log(
+            `Skipping image due to generation error: ${imageError.message}`,
+          );
+        }
       }
 
       // Add delay between requests to avoid rate limiting
       if (i < imagePrompts.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, 3000));
       }
+    }
+
+    const validImages = generatedImages.filter(
+      (img) =>
+        img.mimeType !== "image/placeholder" &&
+        !img.base64Data.startsWith("placeholder_"),
+    );
+
+    console.log(
+      `Image generation complete: ${validImages.length}/${imagePrompts.length} images successfully generated`,
+    );
+
+    if (validImages.length < imagePrompts.length) {
+      console.log(
+        `Note: ${imagePrompts.length - validImages.length} images could not be generated and will be skipped`,
+      );
     }
 
     return generatedImages;
   } catch (error) {
+    console.error("Error in image generation:", error);
     return handleApiError(error);
   }
 };
@@ -459,6 +577,7 @@ const generateImages = async (
 const generateContent = async (
   structure: NotesStructure,
   generatedImages: GeneratedImage[],
+  isFallbackStructure: boolean = false,
 ): Promise<string> => {
   try {
     const apiKeyValue = await getApiKey();
@@ -470,15 +589,61 @@ const generateContent = async (
 ${generatedImages.map((img, idx) => `Image ${idx + 1}: ${img.prompt}`).join("\n")}`
         : "";
 
-    const contentPrompt = `You are an expert educational content creator. Generate comprehensive, well-structured notes based on the following structure.
+    let contentPrompt: string;
 
-Structure:
-${JSON.stringify(structure, null, 2)}
-${imageReferences}
+    if (isFallbackStructure) {
+      // Special handling for fallback structure - focus on the original prompt
+      const originalTopic = structure.contentPrompt
+        .replace("Create comprehensive educational notes about: ", "")
+        .replace(
+          ". Focus on clear explanations, practical examples, and structured learning content.",
+          "",
+        );
+
+      contentPrompt = `You are an expert educational content creator. Create comprehensive, well-structured notes about: ${originalTopic}
+
+Please organize your response to cover:
+1. ${structure.sections[0]?.heading || "Introduction"} - Provide background and overview
+2. ${structure.sections[1]?.heading || "Main Content"} - Detailed explanations and key points
+3. ${structure.sections[2]?.heading || "Examples"} - Practical examples and applications
+4. ${structure.sections[3]?.heading || "Summary"} - Key takeaways and conclusion
+
+Content Guidelines:
+- Write ONLY plain text content - NO markdown, NO JSON, NO special formatting
+- Create flowing, educational content that reads naturally
+- Include specific examples and practical applications
+- Use clear, professional language
+- Write in complete paragraphs with natural breaks
+- Target 1000-1500 words total
+- Focus on providing educational value and comprehensive coverage
+- DO NOT include any structural markers, headings, or formatting symbols
+
+Generate the educational content now:`;
+    } else {
+      // Create a natural description of the structure instead of raw JSON
+      const structureDescription = `
+Title: ${structure.title}
+
+Sections to cover:
+${structure.sections
+  .map(
+    (section, idx) =>
+      `${idx + 1}. ${section.heading}${
+        section.subsections.length > 0
+          ? `
+   - ${section.subsections.join("\n   - ")}`
+          : ""
+      }`,
+  )
+  .join("\n\n")}`;
+
+      contentPrompt = `You are an expert educational content creator. Generate comprehensive, well-structured notes based on the following outline.
+
+${structureDescription}${imageReferences}
 
 Content Generation Guidelines:
-- Create detailed, informative content for each section and subsection
-- DO NOT use any markdown symbols (##, ###, *, -, etc.) - formatting is handled by the JSON structure
+- Create detailed, informative content for each section and subsection listed above
+- DO NOT use any markdown symbols (##, ###, *, -, etc.) - formatting is handled separately
 - Write plain text content only
 - Use clear, educational language that flows naturally
 - Include practical examples, key points, and detailed explanations
@@ -486,8 +651,10 @@ Content Generation Guidelines:
 - Write in paragraph form with natural breaks between ideas
 - Target length: 1000-2000 words total
 - Focus on substance and educational value rather than formatting
+- DO NOT include any JSON structure or formatting in your response
 
-Generate clean, plain text content for each section now:`;
+Generate clean, plain text content covering all the sections and subsections listed above:`;
+    }
 
     const response = await retryWithBackoff(() =>
       genAI.models.generateContent({
@@ -531,7 +698,25 @@ Generate clean, plain text content for each section now:`;
       );
     }
 
-    return response.text;
+    // Clean the response to remove any JSON artifacts or formatting
+    let cleanedContent = response.text.trim();
+
+    // Remove common JSON artifacts that might appear in fallback responses
+    cleanedContent = cleanedContent.replace(/^\{[\s\S]*?\}$/, ""); // Remove if entire response is JSON
+    cleanedContent = cleanedContent.replace(/^```json[\s\S]*?```/gm, ""); // Remove JSON code blocks
+    cleanedContent = cleanedContent.replace(/^```[\s\S]*?```/gm, ""); // Remove any code blocks
+    cleanedContent = cleanedContent.replace(/^[\{\[][\s\S]*?[\}\]]$/gm, ""); // Remove standalone JSON objects/arrays
+    cleanedContent = cleanedContent.replace(/^\s*"[^"]*":\s*/gm, ""); // Remove JSON key patterns
+    cleanedContent = cleanedContent.trim();
+
+    // If content is still too short after cleaning, throw error
+    if (cleanedContent.length < 50) {
+      throw new Error(
+        "Received incomplete content from Gemini. Please try again.",
+      );
+    }
+
+    return cleanedContent;
   } catch (error) {
     return handleApiError(error);
   }
@@ -547,6 +732,13 @@ const parseContentToStructure = (
   const structuredContent: NotebookContent[] = [];
   let order = 0;
   let imageIndex = 0;
+
+  // Filter out placeholder images (images that failed to generate)
+  const validImages = images.filter(
+    (img) =>
+      img.mimeType !== "image/placeholder" &&
+      !img.base64Data.startsWith("placeholder_"),
+  );
 
   for (const line of lines) {
     const trimmedLine = line.trim();
@@ -583,9 +775,13 @@ const parseContentToStructure = (
         order: order++,
       });
 
-      // Insert image after certain content blocks
-      if (imageIndex < images.length && Math.random() > 0.7) {
-        const image = images[imageIndex];
+      // Insert image after certain content blocks (only if we have valid images)
+      if (
+        validImages.length > 0 &&
+        imageIndex < validImages.length &&
+        Math.random() > 0.7
+      ) {
+        const image = validImages[imageIndex];
         structuredContent.push({
           type: "image",
           content: image.prompt,
@@ -598,9 +794,9 @@ const parseContentToStructure = (
     }
   }
 
-  // Add remaining images at the end
-  while (imageIndex < images.length) {
-    const image = images[imageIndex];
+  // Add remaining valid images at the end
+  while (imageIndex < validImages.length) {
+    const image = validImages[imageIndex];
     structuredContent.push({
       type: "image",
       content: image.prompt,
@@ -641,6 +837,20 @@ export const generateNotebook = async (
       console.log("Step 2:", step2);
       onProgress?.(step2);
       images = await generateImages(allImagePrompts);
+
+      const successfulImages = images.filter(
+        (img) =>
+          img.mimeType !== "image/placeholder" &&
+          !img.base64Data.startsWith("placeholder_"),
+      ).length;
+
+      if (successfulImages > 0) {
+        onProgress?.(
+          `Successfully generated ${successfulImages}/${allImagePrompts.length} images`,
+        );
+      } else {
+        onProgress?.("Image generation completed (proceeding without images)");
+      }
     } else {
       onProgress?.("No images needed for this content...");
     }
@@ -649,7 +859,18 @@ export const generateNotebook = async (
     const step3 = "Generating comprehensive content...";
     console.log("Step 3:", step3);
     onProgress?.(step3);
-    const rawContent = await generateContent(structure, images);
+
+    // Check if we're using fallback structure (indicated by simple title pattern)
+    const isFallbackStructure =
+      structure.title.startsWith("Notes: ") &&
+      structure.sections.length <= 4 &&
+      structure.totalImages === 0;
+
+    const rawContent = await generateContent(
+      structure,
+      images,
+      isFallbackStructure,
+    );
 
     // Step 4: Parse content into structured format
     const step4 = "Structuring and formatting content...";
@@ -662,14 +883,23 @@ export const generateNotebook = async (
     );
 
     // Step 5: Create final notebook object
+    // Create final notebook object
     onProgress?.("Finalizing notebook...");
+
+    // Count only valid images (exclude placeholders)
+    const validImageCount = images.filter(
+      (img) =>
+        img.mimeType !== "image/placeholder" &&
+        !img.base64Data.startsWith("placeholder_"),
+    ).length;
+
     const notebook: GeneratedNotebook = {
       id: `notebook_${Date.now()}`,
       title: structure.title,
       structure,
       content: structuredContent,
       createdAt: new Date().toISOString(),
-      totalImages: images.length,
+      totalImages: validImageCount,
       wordCount: rawContent.split(/\s+/).filter((word) => word.length > 0)
         .length,
     };
@@ -782,15 +1012,20 @@ Generate the refined content now, ${refinementRequest ? "addressing the specific
 
     onProgress?.("Processing refined content...");
 
-    // Parse the refined content while preserving existing images
+    // Parse the refined content while preserving existing valid images
     const existingImages = notebook.content
-      .filter((item) => item.type === "image")
+      .filter(
+        (item) =>
+          item.type === "image" &&
+          item.imageData &&
+          !item.imageData.startsWith("placeholder_"),
+      )
       .map((item, index) => ({
         id: `img_refined_${Date.now()}_${index}`,
         prompt: item.content,
         position: index,
-        base64Data: item.imageData || `placeholder_${index}`,
-        mimeType: item.mimeType || "image/placeholder",
+        base64Data: item.imageData || "",
+        mimeType: item.mimeType || "image/png",
       }));
 
     const refinedStructuredContent = parseContentToStructure(
@@ -808,7 +1043,9 @@ Generate the refined content now, ${refinementRequest ? "addressing the specific
       structure: notebook.structure,
       content: refinedStructuredContent,
       createdAt: new Date().toISOString(),
-      totalImages: existingImages.length,
+      totalImages: existingImages.filter(
+        (img) => !img.base64Data.startsWith("placeholder_"),
+      ).length,
       wordCount: response.text.split(/\s+/).filter((word) => word.length > 0)
         .length,
     };
