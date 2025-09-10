@@ -260,10 +260,10 @@ Return a JSON object with the following structure:
 Guidelines:
 - Create 3-5 main sections based on content complexity
 - Each section should have 2-4 subsections
-- Generate image prompts ONLY when they would enhance understanding (0-3 per section)
+- Generate image prompts ONLY when they would enhance understanding (0-2 per section)
 - Image prompts should be detailed and specific
 - Position images strategically throughout the content
-- Total images should be 0-10 based on content needs (0 if no visual aids needed)
+- Total images should be 0-5 based on content needs (0 if no visual aids needed)
 - Content prompt should guide comprehensive content generation
 
 IMPORTANT: Return ONLY a valid JSON object, no additional text, no explanations, no markdown formatting.`;
@@ -679,6 +679,145 @@ export const generateNotebook = async (
     return notebook;
   } catch (error) {
     console.error("Error in notebook generation:", error);
+    return handleApiError(error);
+  }
+};
+
+// Refine existing notebook function
+export const refineNotebook = async (
+  notebook: GeneratedNotebook,
+  refinementRequest?: string,
+  onProgress?: (step: string) => void,
+): Promise<GeneratedNotebook> => {
+  try {
+    onProgress?.("Analyzing current notes for refinement...");
+
+    const apiKeyValue = await getApiKey();
+    const genAI = new GoogleGenAI({ apiKey: apiKeyValue });
+
+    // Extract current content as text for analysis
+    const currentContentText = notebook.content
+      .map((item) => {
+        switch (item.type) {
+          case "heading":
+            return `HEADING: ${item.content}`;
+          case "subheading":
+            return `SUBHEADING: ${item.content}`;
+          case "text":
+            return item.content;
+          case "image":
+            return `IMAGE: ${item.content}`;
+          default:
+            return item.content;
+        }
+      })
+      .join("\n");
+
+    const refinementPrompt = `You are an expert content editor and educational specialist. Your task is to refine and improve the following notes while maintaining their structure and core information.
+
+ORIGINAL NOTEBOOK:
+Title: ${notebook.title}
+Content:
+${currentContentText}
+
+REFINEMENT REQUEST: ${refinementRequest || "General improvement - make the content clearer, more comprehensive, and better structured"}
+
+INSTRUCTIONS:
+1. ${refinementRequest ? "Focus on the specific request above while maintaining overall structure" : "Keep the same overall structure and heading organization"}
+2. ${refinementRequest ? "Keep the same heading organization unless the request specifically asks to change it" : "Improve clarity, readability, and educational value"}
+3. ${refinementRequest ? "Add or improve content based on the user's specific needs" : "Add more detailed explanations where needed"}
+4. ${refinementRequest ? "If adding new sections/topics, integrate them naturally into existing structure" : "Ensure information flows logically"}
+5. Maintain all existing image references and descriptions
+6. DO NOT use markdown formatting (##, ###, *, -, etc.)
+7. Return only plain text content with natural paragraph breaks
+8. ${refinementRequest ? "Ensure new content is accurate, relevant, and well-explained" : "Focus on enhancing understanding and retention"}
+9. ${refinementRequest ? "If examples are requested, provide practical, real-world examples" : "Add practical examples and applications where appropriate"}
+10. ${refinementRequest ? "If clarification is requested, break down complex concepts step-by-step" : "Ensure content is accurate and well-explained"}
+
+Generate the refined content now, ${refinementRequest ? "addressing the specific refinement request while maintaining the overall structure" : "maintaining the same structure but with improved quality and clarity"}:`;
+
+    onProgress?.("Generating refined content...");
+
+    const response = await retryWithBackoff(() =>
+      genAI.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: refinementPrompt,
+        config: {
+          temperature: 0.6,
+          topK: 1,
+          topP: 0.9,
+          maxOutputTokens: 4096,
+          safetySettings: [
+            {
+              category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+              threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            },
+            {
+              category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+              threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            },
+            {
+              category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+              threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            },
+            {
+              category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+              threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            },
+          ],
+        },
+      }),
+    );
+
+    if (!response.text) {
+      throw new Error("No refined content generated. Please try again.");
+    }
+
+    // Validate content is not empty or malformed
+    if (response.text.trim().length < 50) {
+      throw new Error(
+        "Received incomplete refined content from Gemini. Please try again.",
+      );
+    }
+
+    onProgress?.("Processing refined content...");
+
+    // Parse the refined content while preserving existing images
+    const existingImages = notebook.content
+      .filter((item) => item.type === "image")
+      .map((item, index) => ({
+        id: `img_refined_${Date.now()}_${index}`,
+        prompt: item.content,
+        position: index,
+        base64Data: item.imageData || `placeholder_${index}`,
+        mimeType: item.mimeType || "image/placeholder",
+      }));
+
+    const refinedStructuredContent = parseContentToStructure(
+      response.text,
+      existingImages,
+      notebook.structure,
+    );
+
+    onProgress?.("Finalizing refined notebook...");
+
+    // Create refined notebook with updated content
+    const refinedNotebook: GeneratedNotebook = {
+      id: `notebook_refined_${Date.now()}`,
+      title: notebook.title,
+      structure: notebook.structure,
+      content: refinedStructuredContent,
+      createdAt: new Date().toISOString(),
+      totalImages: existingImages.length,
+      wordCount: response.text.split(/\s+/).filter((word) => word.length > 0)
+        .length,
+    };
+
+    console.log("Notebook refinement completed successfully!");
+    onProgress?.("Refinement completed!");
+    return refinedNotebook;
+  } catch (error) {
+    console.error("Error in notebook refinement:", error);
     return handleApiError(error);
   }
 };

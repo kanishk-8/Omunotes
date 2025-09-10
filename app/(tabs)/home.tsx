@@ -6,31 +6,33 @@ import {
   TouchableOpacity,
   RefreshControl,
   Modal,
-  ScrollView,
 } from "react-native";
-import { Image } from "expo-image";
+
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { Ionicons } from "@expo/vector-icons";
 import { useThemeColor } from "@/hooks/useThemeColor";
 import { useFocusEffect } from "@react-navigation/native";
+import { useRouter } from "expo-router";
 import {
   getSavedNotebooks,
   deleteNotebook,
   SavedNotebook,
 } from "@/utils/storage";
 import { useThemedAlert } from "@/hooks/useThemedAlert";
+import { exportNotebookToPDF, isPDFExportSupported } from "@/utils/pdfExport";
+import LottieView from "lottie-react-native";
 
 const Home = () => {
+  const router = useRouter();
   const [savedNotebooks, setSavedNotebooks] = useState<SavedNotebook[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedNotebook, setSelectedNotebook] =
-    useState<SavedNotebook | null>(null);
-  const [showFullNote, setShowFullNote] = useState(false);
+  const [isExportingPDF, setIsExportingPDF] = useState(false);
+  const [exportStep, setExportStep] = useState("");
 
   // Themed alert hook
-  const { confirmDestructive, error, AlertComponent } = useThemedAlert();
+  const { alert, confirmDestructive, error, AlertComponent } = useThemedAlert();
 
   // Theme colors
   const backgroundColor = useThemeColor({}, "background");
@@ -91,13 +93,41 @@ const Home = () => {
   };
 
   const handleViewFullNote = (notebook: SavedNotebook) => {
-    setSelectedNotebook(notebook);
-    setShowFullNote(true);
+    router.push(`/notebook?id=${notebook.id}`);
   };
 
-  const closeFullNote = () => {
-    setShowFullNote(false);
-    setSelectedNotebook(null);
+  const handleExportPDF = async (notebook: SavedNotebook) => {
+    setIsExportingPDF(true);
+    setExportStep("Preparing content...");
+
+    try {
+      const result = await exportNotebookToPDF(
+        notebook,
+        {
+          includeImages: true,
+          includeMetadata: true,
+        },
+        (step: string) => setExportStep(step),
+      );
+
+      if (result.success) {
+        alert(
+          "Export Successful!",
+          "Your notebook has been exported as PDF and is ready to share.",
+        );
+      } else {
+        error("Export Failed", result.message);
+      }
+    } catch (err) {
+      console.error("PDF export error:", err);
+      error(
+        "Export Failed",
+        "An unexpected error occurred while exporting to PDF. Please try again.",
+      );
+    } finally {
+      setIsExportingPDF(false);
+      setExportStep("");
+    }
   };
 
   const renderNotebookItem = ({ item }: { item: SavedNotebook }) => (
@@ -159,15 +189,31 @@ const Home = () => {
           ))}
       </View>
 
-      <TouchableOpacity
-        style={styles.viewButton}
-        onPress={() => handleViewFullNote(item)}
-      >
-        <ThemedText style={[styles.viewButtonText, { color: tintColor }]}>
-          View Full Note
-        </ThemedText>
-        <Ionicons name="chevron-forward" size={16} color={tintColor} />
-      </TouchableOpacity>
+      <View style={styles.cardActions}>
+        <TouchableOpacity
+          style={styles.viewButton}
+          onPress={() => handleViewFullNote(item)}
+        >
+          <ThemedText style={[styles.viewButtonText, { color: tintColor }]}>
+            View Full Note
+          </ThemedText>
+          <Ionicons name="chevron-forward" size={16} color={tintColor} />
+        </TouchableOpacity>
+
+        {isPDFExportSupported() && (
+          <TouchableOpacity
+            style={styles.exportButton}
+            onPress={() => handleExportPDF(item)}
+            disabled={isExportingPDF}
+          >
+            <Ionicons
+              name="document-outline"
+              size={18}
+              color={isExportingPDF ? placeholderColor : tintColor}
+            />
+          </TouchableOpacity>
+        )}
+      </View>
     </View>
   );
 
@@ -231,137 +277,28 @@ const Home = () => {
           ListEmptyComponent={renderEmptyState}
         />
 
-        {/* Full Note Modal */}
-        <Modal
-          visible={showFullNote}
-          animationType="slide"
-          presentationStyle="pageSheet"
-          onRequestClose={closeFullNote}
-        >
-          <ThemedView style={styles.modalContainer}>
-            {selectedNotebook && (
-              <>
-                <View
-                  style={[
-                    styles.modalHeader,
-                    { borderBottomColor: `${placeholderColor}30` },
-                  ]}
-                >
-                  <TouchableOpacity
-                    style={styles.closeButton}
-                    onPress={closeFullNote}
-                  >
-                    <Ionicons name="close" size={24} color={tintColor} />
-                  </TouchableOpacity>
-                  <ThemedText
-                    style={[styles.modalTitle, { color: textColor }]}
-                    numberOfLines={1}
-                  >
-                    {selectedNotebook.title}
-                  </ThemedText>
-                  <View style={styles.placeholder} />
-                </View>
-
-                <ScrollView
-                  style={styles.modalContent}
-                  showsVerticalScrollIndicator={false}
-                >
-                  {selectedNotebook.content
-                    .filter((item, index) => {
-                      // Skip the first heading if it matches the notebook title
-                      if (
-                        index === 0 &&
-                        item.type === "heading" &&
-                        item.content
-                          .toLowerCase()
-                          .includes(
-                            selectedNotebook.title.toLowerCase().split(":")[0],
-                          )
-                      ) {
-                        return false;
-                      }
-                      return true;
-                    })
-                    .map((item, index) => (
-                      <View key={index} style={styles.contentItem}>
-                        {item.type === "heading" && (
-                          <ThemedText
-                            style={[styles.modalHeading, { color: textColor }]}
-                          >
-                            {item.content}
-                          </ThemedText>
-                        )}
-                        {item.type === "subheading" && (
-                          <ThemedText
-                            style={[
-                              styles.modalSubheading,
-                              { color: textColor },
-                            ]}
-                          >
-                            {item.content}
-                          </ThemedText>
-                        )}
-                        {item.type === "text" && (
-                          <ThemedText
-                            style={[styles.modalText, { color: textColor }]}
-                          >
-                            {item.content}
-                          </ThemedText>
-                        )}
-                        {item.type === "image" && (
-                          <View style={styles.modalImageContainer}>
-                            {item.imageData &&
-                            item.mimeType !== "image/placeholder" &&
-                            item.imageData.startsWith("data:image") ? (
-                              <Image
-                                source={{ uri: item.imageData }}
-                                style={styles.modalImage}
-                                contentFit="cover"
-                              />
-                            ) : (
-                              <View
-                                style={[
-                                  styles.modalImagePlaceholder,
-                                  {
-                                    backgroundColor: [
-                                      "#FF6B6B",
-                                      "#4ECDC4",
-                                      "#45B7D1",
-                                      "#96CEB4",
-                                      "#FFEAA7",
-                                      "#DDA0DD",
-                                    ][index % 6],
-                                  },
-                                ]}
-                              >
-                                <Ionicons
-                                  name="image"
-                                  size={32}
-                                  color="white"
-                                />
-                                <ThemedText
-                                  style={styles.modalImagePlaceholderText}
-                                >
-                                  Generated Image
-                                </ThemedText>
-                              </View>
-                            )}
-                            <ThemedText
-                              style={[
-                                styles.modalImageCaption,
-                                { color: placeholderColor },
-                              ]}
-                            >
-                              {item.content}
-                            </ThemedText>
-                          </View>
-                        )}
-                      </View>
-                    ))}
-                </ScrollView>
-              </>
-            )}
-          </ThemedView>
+        {/* PDF Export Progress Modal */}
+        <Modal visible={isExportingPDF} transparent={true} animationType="fade">
+          <View style={styles.exportOverlay}>
+            <View
+              style={[styles.exportModal, { backgroundColor: backgroundColor }]}
+            >
+              <LottieView
+                source={require("@/assets/animations/Sushi.json")}
+                autoPlay
+                loop
+                style={styles.lottieAnimation}
+              />
+              <ThemedText style={[styles.exportText, { color: textColor }]}>
+                {exportStep}
+              </ThemedText>
+              <ThemedText
+                style={[styles.exportSubtext, { color: placeholderColor }]}
+              >
+                Converting your notes to PDF...
+              </ThemedText>
+            </View>
+          </View>
         </Modal>
       </ThemedView>
 
@@ -453,16 +390,25 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     opacity: 0.8,
   },
+  cardActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
   viewButton: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
     gap: 4,
     paddingVertical: 8,
+    flex: 1,
   },
   viewButtonText: {
     fontSize: 14,
     fontWeight: "600",
+  },
+  exportButton: {
+    padding: 8,
+    marginLeft: 8,
   },
   emptyContainer: {
     flex: 1,
@@ -493,79 +439,42 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "500",
   },
-  modalContainer: {
+
+  exportOverlay: {
     flex: 1,
-  },
-  modalHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-  },
-  closeButton: {
-    padding: 4,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    flex: 1,
-    textAlign: "center",
-    marginHorizontal: 16,
-  },
-  placeholder: {
-    width: 32,
-  },
-  modalContent: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 20,
-  },
-  contentItem: {
-    marginBottom: 16,
-  },
-  modalHeading: {
-    fontSize: 24,
-    fontWeight: "bold",
-    marginBottom: 12,
-  },
-  modalSubheading: {
-    fontSize: 20,
-    fontWeight: "600",
-    marginBottom: 8,
-  },
-  modalText: {
-    fontSize: 16,
-    lineHeight: 24,
-  },
-  modalImageContainer: {
-    marginVertical: 12,
-  },
-  modalImage: {
-    height: 200,
-    width: "100%",
-    borderRadius: 12,
-    marginBottom: 8,
-  },
-  modalImagePlaceholder: {
-    height: 200,
-    borderRadius: 12,
-    padding: 20,
-    alignItems: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "center",
-    marginBottom: 8,
+    alignItems: "center",
   },
-  modalImagePlaceholderText: {
-    color: "white",
-    fontSize: 14,
+  exportModal: {
+    padding: 30,
+    borderRadius: 16,
+    alignItems: "center",
+    minWidth: 200,
+    elevation: 10,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 5,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+  },
+  exportText: {
+    fontSize: 16,
     fontWeight: "600",
-    marginTop: 8,
-  },
-  modalImageCaption: {
-    fontSize: 12,
+    marginTop: 16,
     textAlign: "center",
+  },
+  exportSubtext: {
+    fontSize: 14,
     marginTop: 8,
+    textAlign: "center",
+    opacity: 0.8,
+  },
+  lottieAnimation: {
+    width: 100,
+    height: 100,
   },
 });
 

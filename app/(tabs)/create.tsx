@@ -21,13 +21,19 @@ import { Ionicons } from "@expo/vector-icons";
 import { useThemeColor } from "@/hooks/useThemeColor";
 
 import { FileUploadComponent } from "@/components/FileUploadComponent";
-import { generateNotebook, GeneratedNotebook } from "@/utils/gemini";
+import {
+  generateNotebook,
+  GeneratedNotebook,
+  refineNotebook,
+} from "@/utils/gemini";
 import {
   saveNotebook,
   isNotebookSaved as checkNotebookSaved,
 } from "@/utils/storage";
 import LottieView from "lottie-react-native";
 import { useThemedAlert } from "@/hooks/useThemedAlert";
+import { exportNotebookToPDF, isPDFExportSupported } from "@/utils/pdfExport";
+import { NotebookContent } from "@/components/NotebookContent";
 
 const Create = () => {
   const [inputText, setInputText] = useState("");
@@ -39,6 +45,13 @@ const Create = () => {
   const [generationStep, setGenerationStep] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isNotebookSaved, setIsNotebookSaved] = useState(false);
+  const [isExportingPDF, setIsExportingPDF] = useState(false);
+  const [exportStep, setExportStep] = useState("");
+  const [isRefining, setIsRefining] = useState(false);
+  const [refineStep, setRefineStep] = useState("");
+  const [showRefineInput, setShowRefineInput] = useState(false);
+  const [refinePrompt, setRefinePrompt] = useState("");
+  const [isMenuExpanded, setIsMenuExpanded] = useState(false);
 
   // Themed alert hook
   const { alert, error, AlertComponent } = useThemedAlert();
@@ -55,10 +68,33 @@ const Create = () => {
     height: uploadOptionsHeight.value,
   }));
 
+  // FAB Menu Animation
+  const menuRotation = useSharedValue(0);
+  const menuOpacity = useSharedValue(0);
+  const menuScale = useSharedValue(0);
+
+  const menuAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${menuRotation.value}deg` }],
+  }));
+
+  const subButtonsAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: menuOpacity.value,
+    transform: [{ scale: menuScale.value }],
+  }));
+
   const toggleUploadOptions = () => {
     setShowUploadOptions(!showUploadOptions);
     // Increased height to accommodate file previews and upload buttons
     uploadOptionsHeight.value = withTiming(showUploadOptions ? 0 : 120);
+  };
+
+  const toggleMenu = () => {
+    const newState = !isMenuExpanded;
+    setIsMenuExpanded(newState);
+
+    menuRotation.value = withTiming(newState ? 45 : 0, { duration: 200 });
+    menuOpacity.value = withTiming(newState ? 1 : 0, { duration: 200 });
+    menuScale.value = withTiming(newState ? 1 : 0, { duration: 200 });
   };
 
   const handleFilesChange = (newFiles: any[]) => {
@@ -213,6 +249,93 @@ const Create = () => {
     checkSavedStatus();
   }, [generatedNotebook]);
 
+  const handleExportPDF = async () => {
+    if (!generatedNotebook) return;
+
+    setIsExportingPDF(true);
+    setExportStep("Preparing content...");
+
+    try {
+      const result = await exportNotebookToPDF(
+        generatedNotebook,
+        {
+          includeImages: true,
+          includeMetadata: true,
+        },
+        (step: string) => setExportStep(step),
+      );
+
+      if (result.success) {
+        alert(
+          "Export Successful!",
+          "Your notebook has been exported as PDF and is ready to share.",
+        );
+      } else {
+        error("Export Failed", result.message);
+      }
+    } catch (err) {
+      console.error("PDF export error:", err);
+      error(
+        "Export Failed",
+        "An unexpected error occurred while exporting to PDF. Please try again.",
+      );
+    } finally {
+      setIsExportingPDF(false);
+      setExportStep("");
+    }
+  };
+
+  const handleRefineNotes = async (customPrompt?: string) => {
+    if (!generatedNotebook) return;
+
+    setIsRefining(true);
+    setRefineStep("Analyzing current notes...");
+    setShowRefineInput(false);
+
+    try {
+      const refinedNotebook = await refineNotebook(
+        generatedNotebook,
+        customPrompt || undefined,
+        (step: string) => setRefineStep(step),
+      );
+
+      setGeneratedNotebook(refinedNotebook);
+      setIsNotebookSaved(false); // Mark as unsaved since it's been modified
+      setRefinePrompt(""); // Clear the prompt
+
+      alert(
+        "Refinement Complete!",
+        `Your notes have been improved and refined. Word count: ${refinedNotebook.wordCount} words.`,
+      );
+    } catch (err) {
+      console.error("Refinement error:", err);
+      error(
+        "Refinement Failed",
+        "An unexpected error occurred while refining your notes. Please try again.",
+      );
+    } finally {
+      setIsRefining(false);
+      setRefineStep("");
+    }
+  };
+
+  const handleShowRefineOptions = () => {
+    setShowRefineInput(true);
+  };
+
+  const handleCancelRefine = () => {
+    setShowRefineInput(false);
+    setRefinePrompt("");
+  };
+
+  const handleSubmitRefine = () => {
+    if (refinePrompt.trim()) {
+      handleRefineNotes(refinePrompt.trim());
+    } else {
+      handleRefineNotes(); // Use default refinement
+    }
+  };
+
   // Show generation progress
   if (isGenerating) {
     return (
@@ -235,6 +358,136 @@ const Create = () => {
               ? "Servers are busy, retrying automatically..."
               : "This may take a few moments..."}
           </ThemedText>
+        </View>
+      </ThemedView>
+    );
+  }
+
+  // Show PDF export progress
+  if (isExportingPDF) {
+    return (
+      <ThemedView style={styles.container}>
+        <View style={styles.progressContainer}>
+          <LottieView
+            source={require("@/assets/animations/Sushi.json")}
+            autoPlay
+            loop
+            style={styles.lottieAnimation}
+          />
+          <ThemedText style={[styles.progressText, { color: textColor }]}>
+            {exportStep}
+          </ThemedText>
+          <ThemedText
+            style={[styles.progressSubtext, { color: placeholderColor }]}
+          >
+            Converting your notes to PDF...
+          </ThemedText>
+        </View>
+      </ThemedView>
+    );
+  }
+
+  // Show refine progress
+  if (isRefining) {
+    return (
+      <ThemedView style={styles.container}>
+        <View style={styles.progressContainer}>
+          <LottieView
+            source={require("@/assets/animations/Sushi.json")}
+            autoPlay
+            loop
+            style={styles.lottieAnimation}
+          />
+          <ThemedText style={[styles.progressText, { color: textColor }]}>
+            {refineStep}
+          </ThemedText>
+          <ThemedText
+            style={[styles.progressSubtext, { color: placeholderColor }]}
+          >
+            Making your notes even better...
+          </ThemedText>
+        </View>
+      </ThemedView>
+    );
+  }
+
+  // Show refine input modal
+  if (showRefineInput) {
+    return (
+      <ThemedView style={styles.container}>
+        <View style={styles.refineInputContainer}>
+          <View style={styles.refineHeader}>
+            <ThemedText style={[styles.refineTitle, { color: textColor }]}>
+              Refine Your Notes
+            </ThemedText>
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={handleCancelRefine}
+            >
+              <Ionicons name="close" size={24} color={textColor} />
+            </TouchableOpacity>
+          </View>
+
+          <ThemedText
+            style={[styles.refineDescription, { color: placeholderColor }]}
+          >
+            Tell the AI what you&apos;d like to improve or add to your notes:
+          </ThemedText>
+
+          <TextInput
+            value={refinePrompt}
+            onChangeText={setRefinePrompt}
+            placeholderTextColor={placeholderColor}
+            placeholder="e.g., Add more examples, explain concepts better, include practical applications..."
+            multiline
+            style={[
+              styles.refineTextInput,
+              {
+                color: textColor,
+                backgroundColor: backgroundColor,
+                borderColor: placeholderColor,
+              },
+            ]}
+            autoFocus
+          />
+
+          <View style={styles.refineButtonsContainer}>
+            <TouchableOpacity
+              style={[
+                styles.refineActionButton,
+                styles.defaultRefineButton,
+                { backgroundColor: `${tintColor}20`, borderColor: tintColor },
+              ]}
+              onPress={() => handleRefineNotes()}
+            >
+              <ThemedText
+                style={[styles.refineButtonText, { color: tintColor }]}
+              >
+                General Improvement
+              </ThemedText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.refineActionButton,
+                styles.customRefineButton,
+                {
+                  backgroundColor: refinePrompt.trim()
+                    ? tintColor
+                    : `${placeholderColor}30`,
+                  opacity: refinePrompt.trim() ? 1 : 0.5,
+                },
+              ]}
+              onPress={handleSubmitRefine}
+              disabled={!refinePrompt.trim()}
+            >
+              <ThemedText
+                style={[styles.refineButtonText, { color: backgroundColor }]}
+              >
+                Custom Refinement
+              </ThemedText>
+            </TouchableOpacity>
+          </View>
         </View>
       </ThemedView>
     );
@@ -277,119 +530,123 @@ const Create = () => {
           style={styles.contentScrollView}
           showsVerticalScrollIndicator={false}
         >
-          {generatedNotebook.content
-            .filter((item, index) => {
-              // Skip the first heading if it matches the notebook title
-              if (
-                index === 0 &&
-                item.type === "heading" &&
-                item.content
-                  .toLowerCase()
-                  .includes(generatedNotebook.title.toLowerCase().split(":")[0])
-              ) {
-                return false;
-              }
-              return true;
-            })
-            .map((item, index) => (
-              <View key={index} style={styles.contentItem}>
-                {item.type === "heading" && (
-                  <ThemedText style={[styles.heading, { color: textColor }]}>
-                    {item.content}
-                  </ThemedText>
-                )}
-                {item.type === "subheading" && (
-                  <ThemedText style={[styles.subheading, { color: textColor }]}>
-                    {item.content}
-                  </ThemedText>
-                )}
-                {item.type === "text" && (
-                  <ThemedText
-                    style={[styles.contentText, { color: textColor }]}
-                  >
-                    {item.content}
-                  </ThemedText>
-                )}
-                {item.type === "image" && (
-                  <View style={styles.imageContainer}>
-                    {item.imageData &&
-                    item.mimeType !== "image/placeholder" &&
-                    item.imageData.startsWith("data:image") ? (
-                      <Image
-                        source={{ uri: item.imageData }}
-                        style={styles.generatedImage}
-                        contentFit="cover"
-                      />
-                    ) : (
-                      <View
-                        style={[
-                          styles.imagePlaceholder,
-                          {
-                            backgroundColor: [
-                              "#FF6B6B",
-                              "#4ECDC4",
-                              "#45B7D1",
-                              "#96CEB4",
-                              "#FFEAA7",
-                              "#DDA0DD",
-                            ][index % 6],
-                          },
-                        ]}
-                      >
-                        <Ionicons name="image" size={32} color="white" />
-                        <ThemedText style={styles.imagePlaceholderText}>
-                          Generated Image
-                        </ThemedText>
-                      </View>
-                    )}
-                    <ThemedText
-                      style={[styles.imageCaption, { color: placeholderColor }]}
-                    >
-                      {item.content}
-                    </ThemedText>
-                  </View>
-                )}
-              </View>
-            ))}
+          <NotebookContent
+            content={generatedNotebook.content}
+            notebookTitle={generatedNotebook.title}
+          />
         </ScrollView>
 
-        {/* Floating Action Buttons */}
+        {/* Floating Action Buttons Menu */}
         <View style={styles.floatingButtonsContainer}>
-          {/* Save Button */}
-          <TouchableOpacity
-            style={[
-              styles.floatingButton,
-              styles.saveButton,
-              {
-                backgroundColor: isNotebookSaved ? "#4CAF50" : tintColor,
-                opacity: isSaving ? 0.7 : 1,
-              },
-            ]}
-            onPress={handleSaveNotebook}
-            disabled={isSaving || isNotebookSaved}
+          {/* Sub Buttons (Collapsible) */}
+          <Animated.View
+            style={[styles.subButtonsContainer, subButtonsAnimatedStyle]}
+            pointerEvents={isMenuExpanded ? "auto" : "none"}
           >
-            {isSaving ? (
-              <ActivityIndicator size="small" color={backgroundColor} />
-            ) : (
-              <Ionicons
-                name={isNotebookSaved ? "checkmark" : "bookmark"}
-                size={24}
-                color={backgroundColor}
-              />
-            )}
-          </TouchableOpacity>
+            {/* Refine Button */}
+            <TouchableOpacity
+              style={[
+                styles.floatingButton,
+                styles.subButton,
+                {
+                  backgroundColor: tintColor,
+                  opacity: isRefining ? 0.7 : 1,
+                },
+              ]}
+              onPress={() => {
+                handleShowRefineOptions();
+                toggleMenu();
+              }}
+              disabled={isRefining}
+            >
+              {isRefining ? (
+                <ActivityIndicator size="small" color={backgroundColor} />
+              ) : (
+                <Ionicons name="pencil" size={18} color={backgroundColor} />
+              )}
+            </TouchableOpacity>
 
-          {/* New Note Button */}
-          <TouchableOpacity
-            style={[
-              styles.floatingButton,
-              styles.newNoteButton,
-              { backgroundColor: tintColor },
-            ]}
-            onPress={handleStartOver}
-          >
-            <Ionicons name="add" size={28} color={backgroundColor} />
-          </TouchableOpacity>
+            {/* Export PDF Button */}
+            {isPDFExportSupported() && (
+              <TouchableOpacity
+                style={[
+                  styles.floatingButton,
+                  styles.subButton,
+                  {
+                    backgroundColor: tintColor,
+                    opacity: isExportingPDF ? 0.7 : 1,
+                  },
+                ]}
+                onPress={() => {
+                  handleExportPDF();
+                  toggleMenu();
+                }}
+                disabled={isExportingPDF}
+              >
+                {isExportingPDF ? (
+                  <ActivityIndicator size="small" color={backgroundColor} />
+                ) : (
+                  <Ionicons name="document" size={18} color={backgroundColor} />
+                )}
+              </TouchableOpacity>
+            )}
+
+            {/* Save Button */}
+            <TouchableOpacity
+              style={[
+                styles.floatingButton,
+                styles.subButton,
+                {
+                  backgroundColor: isNotebookSaved ? "#4CAF50" : tintColor,
+                  opacity: isSaving ? 0.7 : 1,
+                },
+              ]}
+              onPress={() => {
+                handleSaveNotebook();
+                toggleMenu();
+              }}
+              disabled={isSaving || isNotebookSaved}
+            >
+              {isSaving ? (
+                <ActivityIndicator size="small" color={backgroundColor} />
+              ) : (
+                <Ionicons
+                  name={isNotebookSaved ? "checkmark" : "bookmark"}
+                  size={18}
+                  color={backgroundColor}
+                />
+              )}
+            </TouchableOpacity>
+
+            {/* New Note Button */}
+            <TouchableOpacity
+              style={[
+                styles.floatingButton,
+                styles.subButton,
+                { backgroundColor: "#FF6B35" },
+              ]}
+              onPress={() => {
+                handleStartOver();
+                toggleMenu();
+              }}
+            >
+              <Ionicons name="refresh" size={18} color={backgroundColor} />
+            </TouchableOpacity>
+          </Animated.View>
+
+          {/* Main FAB Button */}
+          <Animated.View style={menuAnimatedStyle}>
+            <TouchableOpacity
+              style={[
+                styles.floatingButton,
+                styles.mainFabButton,
+                { backgroundColor: tintColor },
+              ]}
+              onPress={toggleMenu}
+            >
+              <Ionicons name="add" size={24} color={backgroundColor} />
+            </TouchableOpacity>
+          </Animated.View>
         </View>
 
         {/* Themed Alert Component */}
@@ -810,58 +1067,17 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 20,
   },
-  contentItem: {
-    marginBottom: 16,
-  },
-  heading: {
-    fontSize: 24,
-    fontWeight: "bold",
-    marginBottom: 12,
-  },
-  subheading: {
-    fontSize: 20,
-    fontWeight: "600",
-    marginBottom: 8,
-  },
-  contentText: {
-    fontSize: 16,
-    lineHeight: 24,
-  },
-  imageContainer: {
-    marginVertical: 12,
-  },
-  generatedImage: {
-    height: 180,
-    width: "100%",
-    borderRadius: 12,
-    marginBottom: 8,
-  },
-  imagePlaceholder: {
-    height: 180,
-    borderRadius: 12,
-    padding: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 8,
-  },
-  imagePlaceholderText: {
-    color: "white",
-    fontSize: 14,
-    fontWeight: "600",
-    marginTop: 8,
-  },
-  imageCaption: {
-    fontSize: 12,
-    textAlign: "center",
-    marginTop: 8,
-  },
 
   floatingButtonsContainer: {
     position: "absolute",
     bottom: 30,
     right: 20,
     alignItems: "center",
-    gap: 16,
+  },
+  subButtonsContainer: {
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 12,
   },
   floatingButton: {
     width: 56,
@@ -878,13 +1094,70 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 4.65,
   },
-  saveButton: {
+  subButton: {
     width: 48,
     height: 48,
     borderRadius: 24,
   },
-  newNoteButton: {
-    // Default styling from floatingButton
+  mainFabButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+  },
+  refineInputContainer: {
+    flex: 1,
+    padding: 20,
+    justifyContent: "center",
+  },
+  refineHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  refineTitle: {
+    fontSize: 24,
+    fontWeight: "bold",
+  },
+  cancelButton: {
+    padding: 8,
+  },
+  refineDescription: {
+    fontSize: 16,
+    lineHeight: 24,
+    marginBottom: 20,
+    textAlign: "center",
+  },
+  refineTextInput: {
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    minHeight: 120,
+    maxHeight: 200,
+    fontSize: 16,
+    textAlignVertical: "top",
+    marginBottom: 24,
+  },
+  refineButtonsContainer: {
+    gap: 12,
+  },
+  refineActionButton: {
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    alignItems: "center",
+    borderWidth: 1,
+  },
+  defaultRefineButton: {
+    // Styles applied inline
+  },
+  customRefineButton: {
+    // Styles applied inline
+  },
+  refineButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
   },
 });
 

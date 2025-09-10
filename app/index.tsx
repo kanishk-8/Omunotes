@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Animated,
+  Image,
 } from "react-native";
 import LottieView from "lottie-react-native";
 
@@ -151,31 +152,16 @@ const OnboardingScreen = () => {
     });
   };
 
-  const nextSlide = () => {
-    if (currentSlide < onboardingData.length - 1) {
-      goToSlide(currentSlide + 1);
-    } else {
-      handleGetStarted();
-    }
-  };
-
-  const prevSlide = () => {
-    if (currentSlide > 0) {
-      goToSlide(currentSlide - 1);
-    }
-  };
-
   const renderSlide = (slide: OnboardingSlide, index: number) => (
     <View key={slide.id} style={[styles.slide, { width: screenWidth }]}>
       <View style={styles.slideContent}>
         {/* Icon or Animation */}
         {index === 0 ? (
-          <View style={styles.animationContainer}>
-            <LottieView
-              source={require("../assets/animations/Sushi.json")}
-              autoPlay
-              loop
-              style={styles.lottieAnimation}
+          <View style={styles.brandingContainer}>
+            <Image
+              source={require("../assets/images/icon.png")}
+              style={styles.brandLogo}
+              resizeMode="contain"
             />
           </View>
         ) : (
@@ -233,6 +219,21 @@ const OnboardingScreen = () => {
             </View>
           ))}
         </View>
+
+        {/* Get Started Button - Only on last slide */}
+        {index === onboardingData.length - 1 && (
+          <TouchableOpacity
+            style={[styles.getStartedButton, { backgroundColor: tintColor }]}
+            onPress={handleGetStarted}
+          >
+            <ThemedText
+              style={[styles.getStartedText, { color: backgroundColor }]}
+            >
+              Get Started
+            </ThemedText>
+            <Ionicons name="arrow-forward" size={24} color={backgroundColor} />
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
@@ -300,45 +301,6 @@ const OnboardingScreen = () => {
       <View style={styles.bottomSection}>
         {/* Pagination */}
         {renderPagination()}
-
-        {/* Navigation Buttons */}
-        <View style={styles.navigationContainer}>
-          {currentSlide > 0 ? (
-            <TouchableOpacity
-              style={[styles.navButton, { backgroundColor: `${iconColor}20` }]}
-              onPress={prevSlide}
-            >
-              <Ionicons name="chevron-back" size={20} color={iconColor} />
-              <ThemedText style={[styles.navButtonText, { color: iconColor }]}>
-                Previous
-              </ThemedText>
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.navButton} />
-          )}
-
-          <TouchableOpacity
-            style={[styles.navButton, { backgroundColor: tintColor }]}
-            onPress={nextSlide}
-          >
-            <ThemedText
-              style={[styles.navButtonText, { color: backgroundColor }]}
-            >
-              {currentSlide === onboardingData.length - 1
-                ? "Get Started"
-                : "Next"}
-            </ThemedText>
-            <Ionicons
-              name={
-                currentSlide === onboardingData.length - 1
-                  ? "checkmark"
-                  : "chevron-forward"
-              }
-              size={20}
-              color={backgroundColor}
-            />
-          </TouchableOpacity>
-        </View>
       </View>
 
       {/* Background Decoration */}
@@ -493,6 +455,52 @@ const styles = StyleSheet.create({
   navButtonText: {
     fontSize: 16,
     fontWeight: "600",
+  },
+  brandingContainer: {
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 20,
+    marginTop: 20,
+  },
+  brandLogo: {
+    width: 220,
+    height: 220,
+  },
+  brandName: {
+    fontSize: 42,
+    fontWeight: "900",
+    textAlign: "center",
+    marginBottom: 8,
+    letterSpacing: -1,
+  },
+  brandTagline: {
+    fontSize: 18,
+    fontWeight: "500",
+    textAlign: "center",
+    opacity: 0.8,
+    fontStyle: "italic",
+  },
+  getStartedButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    paddingHorizontal: 32,
+    paddingVertical: 16,
+    borderRadius: 30,
+    width: "100%",
+    marginTop: 20,
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  getStartedText: {
+    fontSize: 18,
+    fontWeight: "700",
   },
   animationContainer: {
     width: 160,

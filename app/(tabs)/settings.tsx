@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
 } from "react-native";
+import LottieView from "lottie-react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ThemedButton } from "@/components/ThemedButton";
 import { ThemedText } from "@/components/ThemedText";
@@ -16,10 +17,12 @@ import { useThemeColor } from "@/hooks/useThemeColor";
 import { Ionicons } from "@expo/vector-icons";
 import { ApiKey } from "@/types/notes";
 import { useThemedAlert } from "@/hooks/useThemedAlert";
+import { clearAllNotebooks } from "@/utils/storage";
 
 const Settings = () => {
   const router = useRouter();
   const [apiKey, setApiKey] = useState<ApiKey | null>(null);
+  const [isResetting, setIsResetting] = useState(false);
 
   const [newKeyValue, setNewKeyValue] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
@@ -31,7 +34,7 @@ const Settings = () => {
   const cardBackground = useThemeColor({}, "background");
 
   // Themed alert hook
-  const { alert, confirmDestructive, success, error, AlertComponent } =
+  const { confirmDestructive, success, error, AlertComponent } =
     useThemedAlert();
 
   useEffect(() => {
@@ -105,26 +108,28 @@ const Settings = () => {
       "This will completely reset the app and delete ALL data including saved notes, API keys, settings, and onboarding status. This action cannot be undone!",
       async () => {
         try {
+          // Show loading animation
+          setIsResetting(true);
+
           // Clear all AsyncStorage data
           await AsyncStorage.clear();
+
+          // Clear all saved notebooks from database
+          await clearAllNotebooks();
 
           // Reset local state
           setApiKey(null);
           setNewKeyValue("");
           setShowAddForm(false);
 
-          alert(
-            "App Reset Complete",
-            "All app data has been cleared. The app will now restart with onboarding.",
-            [
-              {
-                text: "Start Fresh",
-                onPress: () => router.replace("/"),
-              },
-            ],
-          );
+          // Wait for animation to be visible
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+
+          // Navigate to onboarding screen
+          router.replace("/");
         } catch (err) {
           console.error("Error resetting app:", err);
+          setIsResetting(false);
           error("Error", "Failed to reset app data. Please try again.");
         }
       },
@@ -136,6 +141,38 @@ const Settings = () => {
   return (
     <>
       <ThemedView style={styles.container}>
+        {isResetting && (
+          <View
+            style={[
+              styles.resetLoadingOverlay,
+              { backgroundColor: backgroundColor + "F0" },
+            ]}
+          >
+            <View
+              style={[
+                styles.resetLoadingContent,
+                { backgroundColor: cardBackground },
+              ]}
+            >
+              <View style={styles.resetAnimationContainer}>
+                <LottieView
+                  source={require("../../assets/animations/Sushi.json")}
+                  autoPlay
+                  loop
+                  style={styles.resetAnimation}
+                />
+              </View>
+              <ThemedText style={[styles.resetTitle, { color: textColor }]}>
+                Resetting App
+              </ThemedText>
+              <ThemedText
+                style={[styles.resetSubtitle, { color: placeholderColor }]}
+              >
+                Clearing all data and preparing fresh start...
+              </ThemedText>
+            </View>
+          </View>
+        )}
         <View style={styles.header}>
           <ThemedText type="title" style={styles.headerTitle}>
             Settings
@@ -415,6 +452,52 @@ const styles = StyleSheet.create({
   description: {
     fontSize: 14,
     opacity: 0.7,
+  },
+  resetLoadingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 1000,
+  },
+  resetLoadingContent: {
+    paddingHorizontal: 40,
+    paddingVertical: 50,
+    borderRadius: 20,
+    alignItems: "center",
+    minWidth: 280,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  resetAnimationContainer: {
+    width: 120,
+    height: 120,
+    marginBottom: 20,
+  },
+  resetAnimation: {
+    width: "100%",
+    height: "100%",
+  },
+  resetTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  resetSubtitle: {
+    fontSize: 14,
+    textAlign: "center",
+    lineHeight: 20,
+    opacity: 0.8,
   },
 });
 
