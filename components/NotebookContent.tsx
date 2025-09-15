@@ -5,19 +5,24 @@ import {
   TouchableOpacity,
   Modal,
   Dimensions,
+  ScrollView,
+  Platform,
 } from "react-native";
 import { Image } from "expo-image";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { Ionicons } from "@expo/vector-icons";
 import { useThemeColor } from "@/hooks/useThemeColor";
+import * as Clipboard from "expo-clipboard";
 
 export interface NotebookContentItem {
-  type: "text" | "image" | "heading" | "subheading";
+  type: "text" | "image" | "heading" | "subheading" | "points" | "code";
   content: string;
   order: number;
   imageData?: string;
   mimeType?: string;
+  language?: string;
+  points?: string[];
 }
 
 interface NotebookContentProps {
@@ -34,10 +39,13 @@ export const NotebookContent: React.FC<NotebookContentProps> = ({
   // State for image viewer
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showImageViewer, setShowImageViewer] = useState(false);
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
   // Theme colors
   const textColor = useThemeColor({}, "text");
   const placeholderColor = useThemeColor({}, "icon");
+  const tintColor = useThemeColor({}, "tint");
+  const backgroundColor = useThemeColor({}, "background");
 
   // Filter content (skip first heading if it matches title, same as both pages)
   const filteredContent = content.filter((item, index) => {
@@ -63,6 +71,84 @@ export const NotebookContent: React.FC<NotebookContentProps> = ({
     setSelectedImage(null);
   };
 
+  const handleCopyCode = async (code: string) => {
+    try {
+      await Clipboard.setStringAsync(code);
+      setCopiedCode(code);
+      setTimeout(() => setCopiedCode(null), 2000);
+    } catch (error) {
+      console.error("Failed to copy code:", error);
+    }
+  };
+
+  const renderCodeBlock = (item: NotebookContentItem) => {
+    const isCopied = copiedCode === item.content;
+
+    return (
+      <View
+        style={[
+          styles.codeContainer,
+          { backgroundColor: `${placeholderColor}10` },
+        ]}
+      >
+        <View style={styles.codeHeader}>
+          <View style={styles.codeLanguage}>
+            <Ionicons name="code" size={16} color={tintColor} />
+            <ThemedText style={[styles.codeLanguageText, { color: tintColor }]}>
+              {item.language || "code"}
+            </ThemedText>
+          </View>
+          <TouchableOpacity
+            style={[
+              styles.copyButton,
+              { backgroundColor: isCopied ? "#4CAF50" : tintColor },
+            ]}
+            onPress={() => handleCopyCode(item.content)}
+          >
+            <Ionicons
+              name={isCopied ? "checkmark" : "copy"}
+              size={16}
+              color={backgroundColor}
+            />
+            <ThemedText
+              style={[styles.copyButtonText, { color: backgroundColor }]}
+            >
+              {isCopied ? "Copied!" : "Copy"}
+            </ThemedText>
+          </TouchableOpacity>
+        </View>
+        <ScrollView
+          horizontal
+          style={styles.codeScrollView}
+          showsHorizontalScrollIndicator={false}
+        >
+          <ThemedText style={[styles.codeText, { color: textColor }]}>
+            {item.content}
+          </ThemedText>
+        </ScrollView>
+      </View>
+    );
+  };
+
+  const renderPointsList = (item: NotebookContentItem) => {
+    if (!item.points || item.points.length === 0) return null;
+
+    return (
+      <View style={styles.pointsContainer}>
+        {item.points.map((point, index) => (
+          <View key={index} style={styles.pointItem}>
+            <View
+              style={[styles.pointBullet, { backgroundColor: tintColor }]}
+            />
+            <ThemedText style={[styles.pointText, { color: textColor }]}>
+              {point}
+            </ThemedText>
+          </View>
+        ))}
+      </View>
+    );
+  };
+
   const renderContentItem = (item: NotebookContentItem, index: number) => {
     switch (item.type) {
       case "heading":
@@ -85,6 +171,12 @@ export const NotebookContent: React.FC<NotebookContentProps> = ({
             {item.content}
           </ThemedText>
         );
+
+      case "points":
+        return renderPointsList(item);
+
+      case "code":
+        return renderCodeBlock(item);
 
       case "image":
         const hasValidImage =
@@ -231,6 +323,73 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: "center",
     marginTop: 8,
+  },
+  pointsContainer: {
+    marginVertical: 8,
+  },
+  pointItem: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginBottom: 8,
+    paddingLeft: 4,
+  },
+  pointBullet: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginTop: 8,
+    marginRight: 12,
+    flexShrink: 0,
+  },
+  pointText: {
+    fontSize: 16,
+    lineHeight: 24,
+    flex: 1,
+  },
+  codeContainer: {
+    borderRadius: 12,
+    marginVertical: 12,
+    overflow: "hidden",
+  },
+  codeHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(0,0,0,0.1)",
+  },
+  codeLanguage: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  codeLanguageText: {
+    fontSize: 12,
+    fontWeight: "600",
+    textTransform: "uppercase",
+  },
+  copyButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  copyButtonText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  codeScrollView: {
+    maxHeight: 300,
+  },
+  codeText: {
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    fontSize: 14,
+    lineHeight: 20,
+    padding: 16,
+    paddingTop: 12,
   },
   imageViewerOverlay: {
     flex: 1,

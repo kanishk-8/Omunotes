@@ -1,6 +1,6 @@
 import * as Print from "expo-print";
-import { shareAsync } from "expo-sharing";
-import * as FileSystem from "expo-file-system";
+import * as Sharing from "expo-sharing";
+import { File, Paths } from "expo-file-system";
 import { Asset } from "expo-asset";
 import { GeneratedNotebook } from "@/utils/gemini";
 import { SavedNotebook } from "@/utils/storage";
@@ -20,12 +20,8 @@ const getLogoBase64 = async (): Promise<string> => {
   try {
     const asset = Asset.fromModule(require("../assets/images/icon.png"));
     await asset.downloadAsync();
-    const base64 = await FileSystem.readAsStringAsync(
-      asset.localUri || asset.uri,
-      {
-        encoding: FileSystem.EncodingType.Base64,
-      },
-    );
+    const file = new File(asset.localUri || asset.uri);
+    const base64 = file.base64();
     return `data:image/png;base64,${base64}`;
   } catch (error) {
     console.log("Could not load logo:", error);
@@ -99,6 +95,34 @@ const convertNotebookToHTML = async (
           return `
             <div class="content-item">
               <p class="content-text">${escapeHtml(item.content)}</p>
+            </div>
+          `;
+
+        case "points":
+          if (!item.points || item.points.length === 0) return "";
+          const pointsHTML = item.points
+            .map(
+              (point: string) =>
+                `<li class="point-item">${escapeHtml(point)}</li>`,
+            )
+            .join("");
+          return `
+            <div class="content-item">
+              <ul class="points-container">
+                ${pointsHTML}
+              </ul>
+            </div>
+          `;
+
+        case "code":
+          return `
+            <div class="content-item">
+              <div class="code-container">
+                <div class="code-header">
+                  <span class="code-language">${escapeHtml(item.language || "code")}</span>
+                </div>
+                <pre class="code-content"><code>${escapeHtml(item.content)}</code></pre>
+              </div>
             </div>
           `;
 
@@ -184,23 +208,24 @@ const convertNotebookToHTML = async (
           display: flex;
           justify-content: space-between;
           align-items: center;
-          padding: 16px 20px;
-          padding-top: 40px;
+          padding: 12px 20px;
+          padding-top: 20px;
         }
 
         .result-title {
-          font-size: 24px;
+          font-size: 22px;
           font-weight: bold;
           color: #333;
+          margin: 0;
         }
 
         /* Stats container matching app's statsContainer */
         .stats-container {
           display: flex;
           justify-content: space-around;
-          padding: 0 20px 16px 20px;
+          padding: 0 20px 12px 20px;
           flex-wrap: wrap;
-          gap: 10px;
+          gap: 8px;
         }
 
         .stat-item {
@@ -222,18 +247,24 @@ const convertNotebookToHTML = async (
         .content-scroll-view {
           flex: 1;
           padding: 0 20px;
+          margin-top: 8px;
         }
 
         /* Content items matching contentItem */
         .content-item {
-          margin-bottom: 16px;
+          margin-bottom: 8px;
+        }
+
+        /* First content item - reduce top spacing */
+        .content-item:first-child {
+          margin-top: 0;
         }
 
         /* Headings matching app's heading style exactly */
         .heading {
           font-size: 24px;
           font-weight: bold;
-          margin-bottom: 12px;
+          margin-bottom: 6px;
           color: #333;
         }
 
@@ -241,20 +272,21 @@ const convertNotebookToHTML = async (
         .subheading {
           font-size: 20px;
           font-weight: 600;
-          margin-bottom: 8px;
+          margin-bottom: 4px;
           color: #333;
         }
 
         /* Text content matching app's contentText style exactly */
         .content-text {
           font-size: 16px;
-          line-height: 24px;
+          line-height: 22px;
           color: #333;
+          margin: 0;
         }
 
         /* Image container matching app's imageContainer */
         .image-container {
-          margin: 12px 0;
+          margin: 6px 0;
         }
 
         /* Generated images - full size without height restriction */
@@ -301,10 +333,75 @@ const convertNotebookToHTML = async (
           color: #666;
         }
 
+        /* Points container matching app's pointsContainer */
+        .points-container {
+          margin: 6px 0;
+          padding: 0;
+          list-style: none;
+        }
+
+        .point-item {
+          position: relative;
+          padding-left: 20px;
+          margin-bottom: 4px;
+          font-size: 16px;
+          line-height: 20px;
+          color: #333;
+        }
+
+        .point-item::before {
+          content: '•';
+          position: absolute;
+          left: 0;
+          top: 0;
+          color: #007AFF;
+          font-weight: bold;
+        }
+
+        /* Code container matching app's codeContainer */
+        .code-container {
+          background-color: #f8f9fa;
+          border: 1px solid #e9ecef;
+          border-radius: 12px;
+          margin: 6px 0;
+          overflow: hidden;
+        }
+
+        .code-header {
+          background-color: #e9ecef;
+          padding: 8px 16px;
+          border-bottom: 1px solid #dee2e6;
+          font-size: 12px;
+          font-weight: 600;
+          color: #007AFF;
+          text-transform: uppercase;
+        }
+
+        .code-content {
+          padding: 16px;
+          margin: 0;
+          font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+          font-size: 14px;
+          line-height: 20px;
+          color: #333;
+          background: transparent;
+          overflow-x: auto;
+          white-space: pre-wrap;
+          word-wrap: break-word;
+        }
+
+        .code-content code {
+          background: transparent;
+          padding: 0;
+          font-family: inherit;
+          font-size: inherit;
+          color: inherit;
+        }
+
         /* Footer */
         .footer {
-          margin-top: 50px;
-          padding-top: 20px;
+          margin-top: 30px;
+          padding-top: 15px;
           border-top: 1px solid #ddd;
           text-align: center;
           font-size: 12px;
@@ -328,24 +425,74 @@ const convertNotebookToHTML = async (
         @media print {
           body {
             margin: 0;
-            padding: 20px;
+            padding: 15px;
+            line-height: 1.4;
           }
 
           .content-item {
             page-break-inside: avoid;
+            margin-bottom: 4px;
           }
 
           .heading {
             page-break-after: avoid;
+            margin-bottom: 4px;
+            margin-top: 8px;
+          }
+
+          .subheading {
+            page-break-after: avoid;
+            margin-bottom: 3px;
+            margin-top: 6px;
+          }
+
+          .content-text {
+            margin: 2px 0;
+            line-height: 1.3;
           }
 
           .image-container {
             page-break-inside: avoid;
+            margin: 4px 0;
+          }
+
+          .code-container {
+            page-break-inside: avoid;
+            margin: 4px 0;
+          }
+
+          .points-container {
+            page-break-inside: avoid;
+            margin: 3px 0;
+          }
+
+          .point-item {
+            margin-bottom: 2px;
+            line-height: 1.3;
+          }
+
+          .result-header {
+            padding: 12px 15px;
+            padding-top: 20px;
+          }
+
+          .stats-container {
+            padding: 0 15px 12px 15px;
+          }
+
+          .content-scroll-view {
+            padding: 0 15px;
+            margin-top: 4px;
+          }
+
+          .content-item:first-child {
+            margin-top: 0;
           }
         }
 
         @page {
-          margin: 20px;
+          margin: 15px;
+          size: A4;
         }
       </style>
     </head>
@@ -389,14 +536,45 @@ const escapeHtml = (text: string): string => {
 
 // Generate safe filename
 const generateSafeFilename = (title: string): string => {
-  const timestamp = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const dateStamp = now.toISOString().slice(0, 10);
+  const timeStamp = now.toISOString().slice(11, 19).replace(/:/g, "-");
   const safeName = title
     .replace(/[^a-z0-9\s]/gi, "")
     .trim()
     .replace(/\s+/g, "_")
-    .slice(0, 50);
+    .slice(0, 40);
 
-  return `${safeName}_${timestamp}.pdf`;
+  return `${safeName}_${dateStamp}_${timeStamp}.pdf`;
+};
+
+// Generate unique filename by checking for conflicts
+const generateUniqueFilename = (title: string): string => {
+  let filename = generateSafeFilename(title);
+  let counter = 1;
+
+  // Check if file exists and generate alternative names
+  while (new File(Paths.document, filename).exists) {
+    const now = new Date();
+    const dateStamp = now.toISOString().slice(0, 10);
+    const timeStamp = now.toISOString().slice(11, 19).replace(/:/g, "-");
+    const safeName = title
+      .replace(/[^a-z0-9\s]/gi, "")
+      .trim()
+      .replace(/\s+/g, "_")
+      .slice(0, 35); // Shorter to make room for counter
+
+    filename = `${safeName}_${dateStamp}_${timeStamp}_${counter}.pdf`;
+    counter++;
+
+    // Prevent infinite loop
+    if (counter > 100) {
+      filename = `export_${Date.now()}.pdf`;
+      break;
+    }
+  }
+
+  return filename;
 };
 
 // Main export function
@@ -420,20 +598,42 @@ export const exportNotebookToPDF = async (
 
     onProgress?.("PDF generated successfully");
 
-    // Generate safe filename
-    const filename = generateSafeFilename(notebook.title);
-    const finalUri = `${FileSystem.documentDirectory}${filename}`;
+    // Generate unique filename to avoid conflicts
+    const filename = generateUniqueFilename(notebook.title);
 
-    // Copy with proper filename
-    await FileSystem.copyAsync({
-      from: uri,
-      to: finalUri,
-    });
+    // Create File objects for source and destination
+    const sourceFile = new File(uri);
+    const finalFile = new File(Paths.document, filename);
+
+    try {
+      // Copy with proper filename using new File API
+      sourceFile.copy(finalFile);
+
+      // Clean up temporary file
+      if (sourceFile.exists) {
+        sourceFile.delete();
+      }
+    } catch (fileError) {
+      console.error("File operation error:", fileError);
+
+      // Clean up temporary file even if copy failed
+      try {
+        if (sourceFile.exists) {
+          sourceFile.delete();
+        }
+      } catch (cleanupError) {
+        console.warn("Failed to cleanup temporary file:", cleanupError);
+      }
+
+      throw new Error(
+        `Failed to save PDF with filename. ${fileError instanceof Error ? fileError.message : "Unknown error"}`,
+      );
+    }
 
     onProgress?.("Opening share dialog...");
 
     // Share the PDF using expo-sharing
-    await shareAsync(finalUri, {
+    await Sharing.shareAsync(finalFile.uri, {
       mimeType: "application/pdf",
       dialogTitle: "Export Notebook",
       UTI: "com.adobe.pdf",
@@ -442,7 +642,7 @@ export const exportNotebookToPDF = async (
     return {
       success: true,
       message: "PDF exported and shared successfully",
-      uri: finalUri,
+      uri: finalFile.uri,
     };
   } catch (error) {
     console.error("PDF export error:", error);

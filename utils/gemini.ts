@@ -2,12 +2,21 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { ApiKey } from "@/types/notes";
 
+// Configuration constants
+const IMAGE_GENERATION_CONFIG = {
+  MAX_IMAGES_PER_NOTEBOOK: 5,
+  MAX_IMAGES_PER_SECTION: 2,
+  DELAY_BETWEEN_IMAGES_MS: 3000,
+  ENABLE_QUOTA_PROTECTION: true,
+};
+
 // Types for the notebook generation
 export interface NotesStructure {
   title: string;
   sections: {
     heading: string;
     subsections: string[];
+    contentTypes: string[];
     imagePrompts: string[];
     imagePositions: number[];
   }[];
@@ -24,11 +33,13 @@ export interface GeneratedImage {
 }
 
 export interface NotebookContent {
-  type: "text" | "image" | "heading" | "subheading";
+  type: "text" | "image" | "heading" | "subheading" | "points" | "code";
   content: string;
   order: number;
   imageData?: string;
   mimeType?: string;
+  language?: string;
+  points?: string[];
 }
 
 export interface GeneratedNotebook {
@@ -78,9 +89,13 @@ const handleApiError = (error: any): never => {
       );
     } else if (
       error.message.includes("QUOTA_EXCEEDED") ||
+      error.message.includes("exceeded your current quota") ||
+      error.message.includes("RESOURCE_EXHAUSTED") ||
       error.message.includes("429")
     ) {
-      throw new Error("Rate limit exceeded. Please try again later.");
+      throw new Error(
+        "API quota exceeded. Please try again later or upgrade your Gemini API plan.",
+      );
     } else if (error.message.includes("PERMISSION_DENIED")) {
       throw new Error(
         "Permission denied. Please check your API key permissions.",
@@ -182,12 +197,14 @@ const createFallbackStructure = (prompt: string): NotesStructure => {
       {
         heading: "Definition and Overview",
         subsections: ["Basic Concepts", "Key Terms", "Background Information"],
+        contentTypes: ["paragraph", "points"],
         imagePrompts: [],
         imagePositions: [],
       },
       {
         heading: "Detailed Explanation",
         subsections: ["Core Principles", "How It Works", "Important Features"],
+        contentTypes: ["paragraph", "points"],
         imagePrompts: [],
         imagePositions: [],
       },
@@ -198,6 +215,7 @@ const createFallbackStructure = (prompt: string): NotesStructure => {
           "Use Cases",
           "Practical Applications",
         ],
+        contentTypes: ["paragraph", "points"],
         imagePrompts: [],
         imagePositions: [],
       },
@@ -212,6 +230,7 @@ const createFallbackStructure = (prompt: string): NotesStructure => {
       {
         heading: "Introduction to Comparison",
         subsections: ["Overview", "Context"],
+        contentTypes: ["paragraph"],
         imagePrompts: [],
         imagePositions: [],
       },
@@ -222,6 +241,7 @@ const createFallbackStructure = (prompt: string): NotesStructure => {
           "Comparative Analysis",
           "Pros and Cons",
         ],
+        contentTypes: ["points"],
         imagePrompts: [],
         imagePositions: [],
       },
@@ -232,6 +252,37 @@ const createFallbackStructure = (prompt: string): NotesStructure => {
           "Which to Choose",
           "Final Thoughts",
         ],
+        contentTypes: ["paragraph", "points"],
+        imagePrompts: [],
+        imagePositions: [],
+      },
+    ];
+  } else if (
+    cleanPrompt.includes("code") ||
+    cleanPrompt.includes("programming") ||
+    cleanPrompt.includes("tutorial") ||
+    cleanPrompt.includes("how to")
+  ) {
+    mainTopic = prompt.substring(0, 60);
+    sections = [
+      {
+        heading: "Introduction",
+        subsections: ["Overview", "Prerequisites", "What You'll Learn"],
+        contentTypes: ["paragraph", "points"],
+        imagePrompts: [],
+        imagePositions: [],
+      },
+      {
+        heading: "Step-by-Step Guide",
+        subsections: ["Setup", "Implementation", "Examples"],
+        contentTypes: ["points", "code"],
+        imagePrompts: [],
+        imagePositions: [],
+      },
+      {
+        heading: "Advanced Topics",
+        subsections: ["Best Practices", "Common Issues", "Optimization"],
+        contentTypes: ["paragraph", "points", "code"],
         imagePrompts: [],
         imagePositions: [],
       },
@@ -243,24 +294,28 @@ const createFallbackStructure = (prompt: string): NotesStructure => {
       {
         heading: "Introduction",
         subsections: ["Overview", "Background", "Importance"],
+        contentTypes: ["paragraph"],
         imagePrompts: [],
         imagePositions: [],
       },
       {
         heading: "Core Content",
         subsections: ["Key Points", "Detailed Information", "Analysis"],
+        contentTypes: ["paragraph", "points"],
         imagePrompts: [],
         imagePositions: [],
       },
       {
         heading: "Practical Aspects",
         subsections: ["Examples", "Applications", "Implementation"],
+        contentTypes: ["paragraph", "points"],
         imagePrompts: [],
         imagePositions: [],
       },
       {
         heading: "Summary",
         subsections: ["Key Takeaways", "Conclusion", "Next Steps"],
+        contentTypes: ["points"],
         imagePrompts: [],
         imagePositions: [],
       },
@@ -320,7 +375,7 @@ const analyzePromptAndGenerateStructure = async (
         ? `\n\nAdditional context from uploaded files: ${uploadedFiles.map((f) => f.name).join(", ")}`
         : "";
 
-    const structurePrompt = `You are an expert note-taking analyst. Analyze the following prompt and create a comprehensive notes structure.
+    const structurePrompt = `You are an expert note-taking analyst. Analyze the following prompt and create a comprehensive notes structure with intelligent content formatting.
 
 Prompt: ${prompt}${fileContext}
 
@@ -331,22 +386,33 @@ Return a JSON object with the following structure:
     {
       "heading": "Section heading",
       "subsections": ["subsection1", "subsection2"],
+      "contentTypes": ["paragraph", "points", "code"],
       "imagePrompts": ["detailed image prompt 1", "detailed image prompt 2"],
       "imagePositions": [0, 2]
     }
   ],
-  "totalImages": 3,
-  "contentPrompt": "Detailed prompt for content generation based on this structure"
+  "totalImages": 5,
+  "contentPrompt": "Detailed prompt for content generation based on this structure",
+  "preferredFormat": "mixed"
 }
 
-Guidelines:
-- Create 3-5 main sections based on content complexity
-- Each section should have 2-4 subsections
-- Generate image prompts ONLY when they would enhance understanding (0-2 per section)
+Content Analysis Guidelines:
+- Analyze if the topic benefits from point-based format (tutorials, lists, step-by-step guides, comparisons, features, benefits, etc.)
+- Detect if code examples are needed (programming, technical topics, configuration, commands, etc.)
+- Create 3-6 main sections based on content complexity (NO LIMITS)
+- Each section should have 2-5 subsections
+- Generate image prompts when they would enhance understanding (0-3 per section)
 - Image prompts should be detailed and specific
 - Position images strategically throughout the content
-- Total images should be 0-5 based on content needs (0 if no visual aids needed)
-- Content prompt should guide comprehensive content generation
+- Total images should be 0-${IMAGE_GENERATION_CONFIG.MAX_IMAGES_PER_NOTEBOOK} based on content needs (MAX ${IMAGE_GENERATION_CONFIG.MAX_IMAGES_PER_NOTEBOOK} to avoid quota issues)
+- Content prompt should guide comprehensive, unlimited content generation
+- Specify contentTypes for each section: "paragraph" for flowing text, "points" for lists/steps, "code" for technical examples
+
+Format Detection Rules:
+- Use "points" for: tutorials, how-to guides, lists of features/benefits, step-by-step processes, comparisons, key takeaways
+- Use "code" for: programming tutorials, technical documentation, configuration examples, command references
+- Use "paragraph" for: explanatory content, theoretical concepts, detailed descriptions, narratives
+- Use "mixed" for comprehensive topics that need all formats
 
 IMPORTANT: Return ONLY a valid JSON object, no additional text, no explanations, no markdown formatting.`;
 
@@ -358,7 +424,7 @@ IMPORTANT: Return ONLY a valid JSON object, no additional text, no explanations,
           temperature: 0.1,
           topK: 1,
           topP: 0.8,
-          maxOutputTokens: 3000,
+          maxOutputTokens: 4000,
           safetySettings: [
             {
               category: HarmCategory.HARM_CATEGORY_HARASSMENT,
@@ -435,8 +501,21 @@ const generateImages = async (
 
     const generatedImages: GeneratedImage[] = [];
 
-    for (let i = 0; i < imagePrompts.length; i++) {
-      const prompt = imagePrompts[i];
+    // Limit to maximum configured images to avoid quota issues
+    const limitedPrompts = imagePrompts.slice(
+      0,
+      IMAGE_GENERATION_CONFIG.MAX_IMAGES_PER_NOTEBOOK,
+    );
+    let quotaExhausted = false;
+
+    for (let i = 0; i < limitedPrompts.length; i++) {
+      const prompt = limitedPrompts[i];
+
+      // Skip remaining images if quota was exhausted
+      if (quotaExhausted) {
+        console.log(`Skipping remaining images due to quota exhaustion`);
+        break;
+      }
 
       // Enhanced prompt following Gemini best practices for educational illustrations
       const enhancedPrompt = `Create a high-quality educational illustration showing ${prompt}.
@@ -454,7 +533,7 @@ Style: Clean vector illustration, educational infographic style, professional ap
 
       try {
         console.log(
-          `Generating image ${i + 1}/${imagePrompts.length}: ${prompt}`,
+          `Generating image ${i + 1}/${limitedPrompts.length}: ${prompt}`,
         );
 
         const response = await retryWithBackoff(() =>
@@ -530,9 +609,20 @@ Style: Clean vector illustration, educational infographic style, professional ap
           imageError,
         );
 
-        // Only skip if it's an API-related error, don't add placeholder
+        // Check for quota exhausted error (only if quota protection is enabled)
         if (
-          imageError.message?.includes("QUOTA_EXCEEDED") ||
+          IMAGE_GENERATION_CONFIG.ENABLE_QUOTA_PROTECTION &&
+          (imageError.message?.includes("QUOTA_EXCEEDED") ||
+            imageError.message?.includes("exceeded your current quota") ||
+            imageError.message?.includes("RESOURCE_EXHAUSTED") ||
+            imageError.message?.includes("429"))
+        ) {
+          console.log(
+            `Quota exhausted - skipping all remaining image generation`,
+          );
+          quotaExhausted = true;
+          break; // Stop generating more images
+        } else if (
           imageError.message?.includes("PERMISSION_DENIED") ||
           imageError.message?.includes("API_KEY_INVALID")
         ) {
@@ -544,9 +634,11 @@ Style: Clean vector illustration, educational infographic style, professional ap
         }
       }
 
-      // Add delay between requests to avoid rate limiting
-      if (i < imagePrompts.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 3000));
+      // Add delay between requests to avoid rate limiting (only if not quota exhausted)
+      if (i < limitedPrompts.length - 1 && !quotaExhausted) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, IMAGE_GENERATION_CONFIG.DELAY_BETWEEN_IMAGES_MS),
+        );
       }
     }
 
@@ -557,12 +649,15 @@ Style: Clean vector illustration, educational infographic style, professional ap
     );
 
     console.log(
-      `Image generation complete: ${validImages.length}/${imagePrompts.length} images successfully generated`,
+      `Image generation complete: ${validImages.length}/${limitedPrompts.length} images successfully generated`,
     );
 
-    if (validImages.length < imagePrompts.length) {
+    if (validImages.length < limitedPrompts.length) {
+      const reason = quotaExhausted
+        ? " due to quota limits"
+        : " and will be skipped";
       console.log(
-        `Note: ${imagePrompts.length - validImages.length} images could not be generated and will be skipped`,
+        `Note: ${limitedPrompts.length - validImages.length} images could not be generated${reason}`,
       );
     }
 
@@ -609,16 +704,23 @@ Please organize your response to cover:
 4. ${structure.sections[3]?.heading || "Summary"} - Key takeaways and conclusion
 
 Content Guidelines:
-- Write ONLY plain text content - NO markdown, NO JSON, NO special formatting
-- Create flowing, educational content that reads naturally
-- Include specific examples and practical applications
-- Use clear, professional language
-- Write in complete paragraphs with natural breaks
-- Target 1000-1500 words total
-- Focus on providing educational value and comprehensive coverage
-- DO NOT include any structural markers, headings, or formatting symbols
+- Create comprehensive, unlimited content (NO WORD LIMITS)
+- Use PLAIN TEXT formatting with special markers for our custom renderer
+- For explanatory content: Write in flowing paragraphs (plain text)
+- For bullet points: Use format BULLET_POINT: First point
+- For code examples: Use format CODE_BLOCK_START:language then code then CODE_BLOCK_END
+- For numbered lists: Use format NUMBERED_POINT: 1. First step
+- DO NOT use markdown symbols - use our custom markers instead
+- Include specific, practical examples and real-world applications
+- Use clear, professional language appropriate for educational content
+- Focus on providing maximum educational value and complete understanding
+- Include as much detail as needed - there are NO content length restrictions
+- For technical topics, use CODE_BLOCK_START/END markers with language specification
+- For step-by-step content, use BULLET_POINT markers for clear organization
 
-Generate the educational content now:`;
+IMPORTANT: Use ONLY plain text with our custom markers - NO MARKDOWN formatting
+
+Generate the comprehensive educational content now:`;
     } else {
       // Create a natural description of the structure instead of raw JSON
       const structureDescription = `
@@ -643,17 +745,22 @@ ${structureDescription}${imageReferences}
 
 Content Generation Guidelines:
 - Create detailed, informative content for each section and subsection listed above
-- DO NOT use any markdown symbols (##, ###, *, -, etc.) - formatting is handled separately
-- Write plain text content only
-- Use clear, educational language that flows naturally
-- Include practical examples, key points, and detailed explanations
-- Reference images naturally in the content when appropriate (e.g., "The diagram shows...")
-- Write in paragraph form with natural breaks between ideas
-- Target length: 1000-2000 words total
-- Focus on substance and educational value rather than formatting
-- DO NOT include any JSON structure or formatting in your response
+- Use PLAIN TEXT with special markers for our custom renderer
+- For explanatory content: Write in plain text paragraphs
+- For bullet points: Use BULLET_POINT: Content here format
+- For numbered steps: Use NUMBERED_POINT: 1. Step description format
+- For code examples: Use CODE_BLOCK_START:language then code then CODE_BLOCK_END format
+- DO NOT use markdown formatting
+- Include practical examples, key points, and comprehensive explanations
+- Reference images naturally when appropriate
+- NO CONTENT LENGTH LIMITS - provide complete, thorough coverage
+- Focus on maximum educational value and practical applicability
+- Include real-world examples, use cases, and detailed explanations
+- For technical topics, use CODE_BLOCK markers with proper language specification
+- For procedural content, use BULLET_POINT or NUMBERED_POINT markers
+- For conceptual topics, use detailed paragraphs with supporting points using markers
 
-Generate clean, plain text content covering all the sections and subsections listed above:`;
+Generate comprehensive content using ONLY plain text with our custom markers:`;
     }
 
     const response = await retryWithBackoff(() =>
@@ -664,7 +771,7 @@ Generate clean, plain text content covering all the sections and subsections lis
           temperature: 0.7,
           topK: 1,
           topP: 1,
-          maxOutputTokens: 4096,
+          maxOutputTokens: 8192,
           safetySettings: [
             {
               category: HarmCategory.HARM_CATEGORY_HARASSMENT,
@@ -698,15 +805,34 @@ Generate clean, plain text content covering all the sections and subsections lis
       );
     }
 
-    // Clean the response to remove any JSON artifacts or formatting
+    // Clean the response to remove JSON artifacts but preserve our custom markers
     let cleanedContent = response.text.trim();
 
     // Remove common JSON artifacts that might appear in fallback responses
     cleanedContent = cleanedContent.replace(/^\{[\s\S]*?\}$/, ""); // Remove if entire response is JSON
     cleanedContent = cleanedContent.replace(/^```json[\s\S]*?```/gm, ""); // Remove JSON code blocks
-    cleanedContent = cleanedContent.replace(/^```[\s\S]*?```/gm, ""); // Remove any code blocks
     cleanedContent = cleanedContent.replace(/^[\{\[][\s\S]*?[\}\]]$/gm, ""); // Remove standalone JSON objects/arrays
     cleanedContent = cleanedContent.replace(/^\s*"[^"]*":\s*/gm, ""); // Remove JSON key patterns
+
+    // Convert any remaining markdown to our custom format
+    cleanedContent = cleanedContent.replace(/^#{1,6}\s+(.+)$/gm, "$1"); // Remove markdown headers
+    cleanedContent = cleanedContent.replace(
+      /^\*\s+(.+)$/gm,
+      "BULLET_POINT: $1",
+    ); // Convert * bullets
+    cleanedContent = cleanedContent.replace(/^-\s+(.+)$/gm, "BULLET_POINT: $1"); // Convert - bullets
+    cleanedContent = cleanedContent.replace(/^•\s+(.+)$/gm, "BULLET_POINT: $1"); // Convert • bullets
+    cleanedContent = cleanedContent.replace(
+      /^(\d+)\.\s+(.+)$/gm,
+      "NUMBERED_POINT: $1. $2",
+    ); // Convert numbered lists
+    cleanedContent = cleanedContent.replace(
+      /```(\w+)?\n([\s\S]*?)\n```/gm,
+      (match, lang, code) => {
+        return `CODE_BLOCK_START:${lang || "text"}\n${code}\nCODE_BLOCK_END`;
+      },
+    ); // Convert markdown code blocks
+
     cleanedContent = cleanedContent.trim();
 
     // If content is still too short after cleaning, throw error
@@ -722,7 +848,7 @@ Generate clean, plain text content covering all the sections and subsections lis
   }
 };
 
-// Parse content into structured format
+// Parse content into structured format with support for points and code blocks
 const parseContentToStructure = (
   content: string,
   images: GeneratedImage[],
@@ -740,10 +866,116 @@ const parseContentToStructure = (
       !img.base64Data.startsWith("placeholder_"),
   );
 
-  for (const line of lines) {
-    const trimmedLine = line.trim();
+  let i = 0;
+  while (i < lines.length) {
+    const trimmedLine = lines[i].trim();
 
-    if (!trimmedLine) continue;
+    if (!trimmedLine) {
+      i++;
+      continue;
+    }
+
+    // Check for code blocks with custom markers or traditional markdown
+    const isCustomCodeBlock = trimmedLine.startsWith("CODE_BLOCK_START:");
+    const isMarkdownCodeBlock = trimmedLine.startsWith("```");
+
+    if (isCustomCodeBlock || isMarkdownCodeBlock) {
+      let language: string;
+
+      if (isCustomCodeBlock) {
+        language =
+          trimmedLine.replace("CODE_BLOCK_START:", "").trim() || "text";
+      } else {
+        language = trimmedLine.slice(3).trim() || "text";
+      }
+
+      const codeLines: string[] = [];
+      i++; // Move past opening marker
+
+      const endMarker = isCustomCodeBlock ? "CODE_BLOCK_END" : "```";
+
+      while (i < lines.length && !lines[i].trim().startsWith(endMarker)) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+
+      if (codeLines.length > 0) {
+        structuredContent.push({
+          type: "code",
+          content: codeLines.join("\n"),
+          order: order++,
+          language: language,
+        });
+      }
+      i++; // Move past closing marker
+      continue;
+    }
+
+    // Check for custom bullet point and numbered list markers, plus fallback for traditional markdown
+    const isBulletPoint = trimmedLine.startsWith("BULLET_POINT:");
+    const isNumberedPoint = trimmedLine.startsWith("NUMBERED_POINT:");
+
+    // Fallback for traditional markdown that might slip through
+    const isTraditionalBullet =
+      trimmedLine.startsWith("•") ||
+      trimmedLine.startsWith("-") ||
+      trimmedLine.startsWith("*");
+    const isTraditionalNumbered = /^\d+\.\s/.test(trimmedLine);
+
+    if (
+      isBulletPoint ||
+      isNumberedPoint ||
+      isTraditionalBullet ||
+      isTraditionalNumbered
+    ) {
+      const points: string[] = [];
+
+      while (i < lines.length) {
+        const currentLine = lines[i].trim();
+        if (!currentLine) {
+          i++;
+          continue;
+        }
+
+        const isCurrentBullet = currentLine.startsWith("BULLET_POINT:");
+        const isCurrentNumbered = currentLine.startsWith("NUMBERED_POINT:");
+
+        // Fallback for traditional markdown
+        const isCurrentTraditionalBullet =
+          currentLine.startsWith("•") ||
+          currentLine.startsWith("-") ||
+          currentLine.startsWith("*");
+        const isCurrentTraditionalNumbered = /^\d+\.\s/.test(currentLine);
+
+        if (
+          isCurrentBullet ||
+          isCurrentNumbered ||
+          isCurrentTraditionalBullet ||
+          isCurrentTraditionalNumbered
+        ) {
+          // Extract content after the marker (custom or traditional)
+          let cleanPoint = currentLine
+            .replace(/^BULLET_POINT:\s*/, "")
+            .replace(/^NUMBERED_POINT:\s*/, "")
+            .replace(/^[•\-*]\s*/, "")
+            .replace(/^\d+\.\s*/, "");
+          points.push(cleanPoint);
+          i++;
+        } else {
+          break;
+        }
+      }
+
+      if (points.length > 0) {
+        structuredContent.push({
+          type: "points",
+          content: "Points",
+          order: order++,
+          points: points,
+        });
+      }
+      continue;
+    }
 
     // Check if line matches section headings from structure
     const isMainHeading = structure.sections.some((section) =>
@@ -792,6 +1024,8 @@ const parseContentToStructure = (
         imageIndex++;
       }
     }
+
+    i++;
   }
 
   // Add remaining valid images at the end
@@ -833,23 +1067,49 @@ export const generateNotebook = async (
 
     let images: GeneratedImage[] = [];
     if (allImagePrompts.length > 0) {
-      const step2 = `Generating ${allImagePrompts.length} images...`;
+      // Limit to max configured images
+      const limitedPrompts = allImagePrompts.slice(
+        0,
+        IMAGE_GENERATION_CONFIG.MAX_IMAGES_PER_NOTEBOOK,
+      );
+      const step2 = `Generating ${limitedPrompts.length} images...`;
       console.log("Step 2:", step2);
       onProgress?.(step2);
-      images = await generateImages(allImagePrompts);
 
-      const successfulImages = images.filter(
-        (img) =>
-          img.mimeType !== "image/placeholder" &&
-          !img.base64Data.startsWith("placeholder_"),
-      ).length;
+      try {
+        images = await generateImages(limitedPrompts);
 
-      if (successfulImages > 0) {
-        onProgress?.(
-          `Successfully generated ${successfulImages}/${allImagePrompts.length} images`,
-        );
-      } else {
-        onProgress?.("Image generation completed (proceeding without images)");
+        const successfulImages = images.filter(
+          (img) =>
+            img.mimeType !== "image/placeholder" &&
+            !img.base64Data.startsWith("placeholder_"),
+        ).length;
+
+        if (successfulImages > 0) {
+          onProgress?.(
+            `Successfully generated ${successfulImages}/${limitedPrompts.length} images`,
+          );
+        } else {
+          onProgress?.(
+            "Image generation completed (proceeding without images)",
+          );
+        }
+      } catch (imageError: any) {
+        // Handle quota exhausted errors gracefully
+        if (
+          imageError.message?.includes("QUOTA_EXCEEDED") ||
+          imageError.message?.includes("exceeded your current quota") ||
+          imageError.message?.includes("RESOURCE_EXHAUSTED") ||
+          imageError.message?.includes("429")
+        ) {
+          onProgress?.(
+            "Image quota exceeded - continuing with text content only...",
+          );
+          images = []; // Continue without images
+        } else {
+          // Re-throw other errors
+          throw imageError;
+        }
       }
     } else {
       onProgress?.("No images needed for this content...");
@@ -909,6 +1169,20 @@ export const generateNotebook = async (
     return notebook;
   } catch (error) {
     console.error("Error in notebook generation:", error);
+
+    // Special handling for quota exhausted errors
+    if (
+      error instanceof Error &&
+      (error.message?.includes("QUOTA_EXCEEDED") ||
+        error.message?.includes("exceeded your current quota") ||
+        error.message?.includes("RESOURCE_EXHAUSTED") ||
+        error.message?.includes("429"))
+    ) {
+      throw new Error(
+        "API quota exceeded. Please try again later or upgrade your Gemini API plan for more quota.",
+      );
+    }
+
     return handleApiError(error);
   }
 };
@@ -958,11 +1232,12 @@ INSTRUCTIONS:
 3. ${refinementRequest ? "Add or improve content based on the user's specific needs" : "Add more detailed explanations where needed"}
 4. ${refinementRequest ? "If adding new sections/topics, integrate them naturally into existing structure" : "Ensure information flows logically"}
 5. Maintain all existing image references and descriptions
-6. DO NOT use markdown formatting (##, ###, *, -, etc.)
-7. Return only plain text content with natural paragraph breaks
-8. ${refinementRequest ? "Ensure new content is accurate, relevant, and well-explained" : "Focus on enhancing understanding and retention"}
-9. ${refinementRequest ? "If examples are requested, provide practical, real-world examples" : "Add practical examples and applications where appropriate"}
-10. ${refinementRequest ? "If clarification is requested, break down complex concepts step-by-step" : "Ensure content is accurate and well-explained"}
+6. Use PLAIN TEXT with custom markers - NO markdown formatting
+7. For bullet points use "BULLET_POINT: content" format
+8. For code use "CODE_BLOCK_START:language\ncode\nCODE_BLOCK_END" format
+9. ${refinementRequest ? "Ensure new content is accurate, relevant, and well-explained" : "Focus on enhancing understanding and retention"}
+10. ${refinementRequest ? "If examples are requested, provide practical, real-world examples" : "Add practical examples and applications where appropriate"}
+11. ${refinementRequest ? "If clarification is requested, break down complex concepts step-by-step" : "Ensure content is accurate and well-explained"}
 
 Generate the refined content now, ${refinementRequest ? "addressing the specific refinement request while maintaining the overall structure" : "maintaining the same structure but with improved quality and clarity"}:`;
 
@@ -976,7 +1251,7 @@ Generate the refined content now, ${refinementRequest ? "addressing the specific
           temperature: 0.6,
           topK: 1,
           topP: 0.9,
-          maxOutputTokens: 4096,
+          maxOutputTokens: 8192,
           safetySettings: [
             {
               category: HarmCategory.HARM_CATEGORY_HARASSMENT,

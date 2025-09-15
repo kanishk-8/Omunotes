@@ -146,6 +146,14 @@ const Create = () => {
             "Gemini servers are busy. Please wait a few minutes and try again.";
         } else if (error.message.includes("API key")) {
           errorMessage = "Please check your API key in Settings.";
+        } else if (
+          error.message.includes("QUOTA_EXCEEDED") ||
+          error.message.includes("exceeded your current quota") ||
+          error.message.includes("RESOURCE_EXHAUSTED") ||
+          error.message.includes("API quota exceeded")
+        ) {
+          errorMessage =
+            "API quota exceeded. Your notes were generated but some images may be missing. Please try again later or upgrade your Gemini API plan.";
         } else if (error.message.includes("Rate limit")) {
           errorMessage =
             "Too many requests. Please wait a moment and try again.";
